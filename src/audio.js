@@ -1,7 +1,7 @@
 /**
- * GestureFlow 3D - Ambient Audio Synthesizer (Web Audio API)
- * Generates an ethereal, reactive sci-fi soundscape modulated by
- * hand movement, gesture energy, and particle dynamics.
+ * GestureFlow 3D - Optimized Ambient Audio Synthesizer (Web Audio API)
+ * Generates reactive ambient soundscapes with throttled parameter dispatch
+ * to prevent unnecessary main thread audio overhead.
  */
 
 export class AmbientSynthesizer {
@@ -13,9 +13,14 @@ export class AmbientSynthesizer {
     // Sound generators
     this.oscillators = [];
     this.filter = null;
-    this.reverbGain = null;
     this.noiseNode = null;
     this.noiseGain = null;
+
+    // Parameter throttling (updates audio thread at 20Hz)
+    this.lastAudioUpdate = 0;
+    this.audioUpdateInterval = 50; // ms
+    this.prevFreq = 450;
+    this.prevQ = 4.0;
   }
 
   /**
@@ -57,8 +62,6 @@ export class AmbientSynthesizer {
 
         osc.type = i % 2 === 0 ? 'sine' : 'triangle';
         osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
-
-        // Individual detuning for rich chorusing
         osc.detune.setValueAtTime((Math.random() - 0.5) * 15, this.ctx.currentTime);
 
         const gainVal = 0.12 / (i + 1);
@@ -121,17 +124,20 @@ export class AmbientSynthesizer {
   }
 
   /**
-   * Modulate audio parameters dynamically based on gesture and movement
+   * Modulate audio parameters throttled to 20Hz
    */
   update(gestureState, handData) {
     if (!this.isEnabled || !this.ctx || !this.filter) return;
+
+    const now = performance.now();
+    if (now - this.lastAudioUpdate < this.audioUpdateInterval) return;
+    this.lastAudioUpdate = now;
 
     const t = this.ctx.currentTime;
     const gesture = gestureState ? gestureState.name : 'NO HAND DETECTED';
     const speed = (handData && handData.speed) || 0;
     const pinchDist = handData ? handData.pinchDistance : 1.0;
 
-    // Filter frequency modulation
     let targetFreq = 450;
     let targetQ = 4.0;
     let noiseTargetGain = Math.min(0.08, speed * 0.002);
@@ -142,11 +148,10 @@ export class AmbientSynthesizer {
         targetQ = 2.5;
         break;
       case 'FIST':
-        targetFreq = 160; // Deep sub-bass resonance
+        targetFreq = 160;
         targetQ = 8.0;
         break;
       case 'PINCH':
-        // Pitch/filter frequency increases as pinch tightens
         targetFreq = 300 + (1.0 - Math.min(1.0, pinchDist / 0.1)) * 1400;
         targetQ = 6.0;
         break;
@@ -163,8 +168,12 @@ export class AmbientSynthesizer {
         break;
     }
 
-    this.filter.frequency.setTargetAtTime(targetFreq, t, 0.1);
-    this.filter.Q.setTargetAtTime(targetQ, t, 0.1);
+    if (Math.abs(targetFreq - this.prevFreq) > 10 || Math.abs(targetQ - this.prevQ) > 0.2) {
+      this.filter.frequency.setTargetAtTime(targetFreq, t, 0.1);
+      this.filter.Q.setTargetAtTime(targetQ, t, 0.1);
+      this.prevFreq = targetFreq;
+      this.prevQ = targetQ;
+    }
 
     if (this.noiseGain) {
       this.noiseGain.gain.setTargetAtTime(noiseTargetGain, t, 0.05);

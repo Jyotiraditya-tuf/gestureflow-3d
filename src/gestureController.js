@@ -1,10 +1,9 @@
 /**
- * GestureFlow 3D - Hand Gesture Recognition & Classification
- * Uses 21 3D MediaPipe Hand Landmarks to detect gestures, compute velocities,
- * and provide temporally smoothed confidence-rated gesture states.
+ * GestureFlow 3D - Optimized Gesture Recognition & Classification
+ * Efficient 3D hand landmark analysis with squared-distance metrics,
+ * temporal hysteresis, and zero allocation during evaluation.
  */
 
-// MediaPipe Landmark Index Constants
 export const HAND_LANDMARKS = {
   WRIST: 0,
   THUMB_CMC: 1,
@@ -31,7 +30,6 @@ export const HAND_LANDMARKS = {
 
 export class GestureController {
   constructor() {
-    // History & smoothing buffers
     this.prevLandmarks = null;
     this.prevTimestamp = 0;
     this.smoothedVelocity = { x: 0, y: 0, z: 0 };
@@ -46,12 +44,10 @@ export class GestureController {
     this.gestureConfidence = 0;
     this.gestureCandidate = 'NO HAND DETECTED';
     this.candidateFrames = 0;
-    this.requiredHoldFrames = 3; // 3 frames debounce to prevent UI flickering
+    this.requiredHoldFrames = 3;
 
-    // Velocity history for fast swipe detection
     this.velocityMagnitude = 0;
 
-    // Gesture definitions for UI display
     this.gestureMeta = {
       'OPEN PALM': {
         icon: '✋',
@@ -91,77 +87,53 @@ export class GestureController {
     };
   }
 
-  /**
-   * Euclidean distance between two 3D landmarks
-   */
-  dist3D(p1, p2) {
+  dist3DSq(p1, p2) {
     const dx = p1.x - p2.x;
     const dy = p1.y - p2.y;
     const dz = (p1.z || 0) - (p2.z || 0);
-    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    return dx * dx + dy * dy + dz * dz;
   }
 
-  /**
-   * Convert normalized camera coordinates [0..1] to 3D World space coordinates
-   */
   mapToWorldSpace(normPoint, depth = 35) {
-    // Camera is mirrored horizontally: x in [0..1] -> [-X, +X]
     const worldX = (0.5 - normPoint.x) * 55;
     const worldY = (0.5 - normPoint.y) * 40;
     const worldZ = ((normPoint.z || 0) * -45) + (depth - 35);
     return { x: worldX, y: worldY, z: worldZ };
   }
 
-  /**
-   * Calculate palm center from key hand joints
-   */
   calculatePalmCenter(landmarks) {
     const L = HAND_LANDMARKS;
-    const indices = [L.WRIST, L.INDEX_MCP, L.MIDDLE_MCP, L.RING_MCP, L.PINKY_MCP];
-    let sumX = 0, sumY = 0, sumZ = 0;
-    for (const idx of indices) {
-      sumX += landmarks[idx].x;
-      sumY += landmarks[idx].y;
-      sumZ += landmarks[idx].z || 0;
-    }
+    const p0 = landmarks[L.WRIST];
+    const p5 = landmarks[L.INDEX_MCP];
+    const p9 = landmarks[L.MIDDLE_MCP];
+    const p13 = landmarks[L.RING_MCP];
+    const p17 = landmarks[L.PINKY_MCP];
+
     return {
-      x: sumX / indices.length,
-      y: sumY / indices.length,
-      z: sumZ / indices.length
+      x: (p0.x + p5.x + p9.x + p13.x + p17.x) * 0.2,
+      y: (p0.y + p5.y + p9.y + p13.y + p17.y) * 0.2,
+      z: ((p0.z || 0) + (p5.z || 0) + (p9.z || 0) + (p13.z || 0) + (p17.z || 0)) * 0.2
     };
   }
 
-  /**
-   * Check if individual fingers are extended (open) vs curled (closed)
-   */
   getFingerStates(landmarks) {
     const L = HAND_LANDMARKS;
     const wrist = landmarks[L.WRIST];
 
-    // Distance of fingertips and PIP joints to wrist
-    const indexTipDist = this.dist3D(landmarks[L.INDEX_TIP], wrist);
-    const indexPipDist = this.dist3D(landmarks[L.INDEX_PIP], wrist);
-    const indexExtended = indexTipDist > indexPipDist * 1.15;
+    // Using squared distances: tipDistSq > pipDistSq * 1.32 (1.15^2 ~ 1.32)
+    const indexExtended = this.dist3DSq(landmarks[L.INDEX_TIP], wrist) > this.dist3DSq(landmarks[L.INDEX_PIP], wrist) * 1.32;
+    const middleExtended = this.dist3DSq(landmarks[L.MIDDLE_TIP], wrist) > this.dist3DSq(landmarks[L.MIDDLE_PIP], wrist) * 1.32;
+    const ringExtended = this.dist3DSq(landmarks[L.RING_TIP], wrist) > this.dist3DSq(landmarks[L.RING_PIP], wrist) * 1.32;
+    const pinkyExtended = this.dist3DSq(landmarks[L.PINKY_TIP], wrist) > this.dist3DSq(landmarks[L.PINKY_PIP], wrist) * 1.32;
 
-    const middleTipDist = this.dist3D(landmarks[L.MIDDLE_TIP], wrist);
-    const middlePipDist = this.dist3D(landmarks[L.MIDDLE_PIP], wrist);
-    const middleExtended = middleTipDist > middlePipDist * 1.15;
+    const thumbTipDistSq = this.dist3DSq(landmarks[L.THUMB_TIP], landmarks[L.PINKY_MCP]);
+    const thumbMcpDistSq = this.dist3DSq(landmarks[L.THUMB_MCP], landmarks[L.PINKY_MCP]);
+    const thumbExtended = thumbTipDistSq > thumbMcpDistSq * 1.21;
 
-    const ringTipDist = this.dist3D(landmarks[L.RING_TIP], wrist);
-    const ringPipDist = this.dist3D(landmarks[L.RING_PIP], wrist);
-    const ringExtended = ringTipDist > ringPipDist * 1.15;
+    const pinchDistSq = this.dist3DSq(landmarks[L.THUMB_TIP], landmarks[L.INDEX_TIP]);
+    const pinchDist = Math.sqrt(pinchDistSq);
 
-    const pinkyTipDist = this.dist3D(landmarks[L.PINKY_TIP], wrist);
-    const pinkyPipDist = this.dist3D(landmarks[L.PINKY_PIP], wrist);
-    const pinkyExtended = pinkyTipDist > pinkyPipDist * 1.15;
-
-    // Thumb extension: distance between thumb tip and pinky MCP
-    const thumbTipDistToPinky = this.dist3D(landmarks[L.THUMB_TIP], landmarks[L.PINKY_MCP]);
-    const thumbMcpDistToPinky = this.dist3D(landmarks[L.THUMB_MCP], landmarks[L.PINKY_MCP]);
-    const thumbExtended = thumbTipDistToPinky > thumbMcpDistToPinky * 1.1;
-
-    // Pinch distance between thumb tip and index tip
-    const pinchDist = this.dist3D(landmarks[L.THUMB_TIP], landmarks[L.INDEX_TIP]);
+    const extCount = (thumbExtended ? 1 : 0) + (indexExtended ? 1 : 0) + (middleExtended ? 1 : 0) + (ringExtended ? 1 : 0) + (pinkyExtended ? 1 : 0);
 
     return {
       thumb: thumbExtended,
@@ -170,13 +142,10 @@ export class GestureController {
       ring: ringExtended,
       pinky: pinkyExtended,
       pinchDistance: pinchDist,
-      extendedCount: (thumbExtended ? 1 : 0) + (indexExtended ? 1 : 0) + (middleExtended ? 1 : 0) + (ringExtended ? 1 : 0) + (pinkyExtended ? 1 : 0)
+      extendedCount: extCount
     };
   }
 
-  /**
-   * Process raw MediaPipe results for current frame
-   */
   process(results, timestamp = performance.now()) {
     const dt = Math.max(0.001, (timestamp - this.prevTimestamp) / 1000);
     this.prevTimestamp = timestamp;
@@ -185,7 +154,9 @@ export class GestureController {
     const handCount = multiHandLandmarks ? multiHandLandmarks.length : 0;
 
     if (handCount === 0) {
-      this.smoothedVelocity = { x: 0, y: 0, z: 0 };
+      this.smoothedVelocity.x = 0;
+      this.smoothedVelocity.y = 0;
+      this.smoothedVelocity.z = 0;
       this.velocityMagnitude = 0;
       this.updateSmoothedGesture('NO HAND DETECTED', 1.0);
       return {
@@ -198,16 +169,12 @@ export class GestureController {
 
     // 1. Two Hands Detected
     if (handCount >= 2) {
-      const hand1Landmarks = multiHandLandmarks[0];
-      const hand2Landmarks = multiHandLandmarks[1];
-
-      const palm1 = this.calculatePalmCenter(hand1Landmarks);
-      const palm2 = this.calculatePalmCenter(hand2Landmarks);
+      const palm1 = this.calculatePalmCenter(multiHandLandmarks[0]);
+      const palm2 = this.calculatePalmCenter(multiHandLandmarks[1]);
 
       const wHand1 = this.mapToWorldSpace(palm1);
       const wHand2 = this.mapToWorldSpace(palm2);
 
-      // Smooth positions
       const alpha = 0.35;
       this.smoothedHand1.x += (wHand1.x - this.smoothedHand1.x) * alpha;
       this.smoothedHand1.y += (wHand1.y - this.smoothedHand1.y) * alpha;
@@ -217,7 +184,7 @@ export class GestureController {
       this.smoothedHand2.y += (wHand2.y - this.smoothedHand2.y) * alpha;
       this.smoothedHand2.z += (wHand2.z - this.smoothedHand2.z) * alpha;
 
-      const normDist = this.dist3D(palm1, palm2);
+      const normDist = Math.sqrt(this.dist3DSq(palm1, palm2));
 
       this.updateSmoothedGesture('TWO HANDS', 0.95);
 
@@ -248,7 +215,6 @@ export class GestureController {
     const palm = this.calculatePalmCenter(landmarks);
     const wPalm = this.mapToWorldSpace(palm);
 
-    // Calculate velocity
     if (this.prevLandmarks) {
       const prevPalm = this.calculatePalmCenter(this.prevLandmarks);
       const prevWPalm = this.mapToWorldSpace(prevPalm);
@@ -256,7 +222,6 @@ export class GestureController {
       const rawVy = (wPalm.y - prevWPalm.y) / dt;
       const rawVz = (wPalm.z - prevWPalm.z) / dt;
 
-      // Exponential smoothing for velocity
       const vAlpha = 0.4;
       this.smoothedVelocity.x += (rawVx - this.smoothedVelocity.x) * vAlpha;
       this.smoothedVelocity.y += (rawVy - this.smoothedVelocity.y) * vAlpha;
@@ -270,19 +235,16 @@ export class GestureController {
     }
     this.prevLandmarks = landmarks;
 
-    // Smooth palm position
     const pAlpha = 0.35;
     this.smoothedPalm.x += (wPalm.x - this.smoothedPalm.x) * pAlpha;
     this.smoothedPalm.y += (wPalm.y - this.smoothedPalm.y) * pAlpha;
     this.smoothedPalm.z += (wPalm.z - this.smoothedPalm.z) * pAlpha;
 
-    // Index fingertip position
     const wIndex = this.mapToWorldSpace(landmarks[L.INDEX_TIP]);
     this.smoothedIndexTip.x += (wIndex.x - this.smoothedIndexTip.x) * pAlpha;
     this.smoothedIndexTip.y += (wIndex.y - this.smoothedIndexTip.y) * pAlpha;
     this.smoothedIndexTip.z += (wIndex.z - this.smoothedIndexTip.z) * pAlpha;
 
-    // Pinch point (midpoint between thumb and index tips)
     const pinchMid = {
       x: (landmarks[L.THUMB_TIP].x + landmarks[L.INDEX_TIP].x) * 0.5,
       y: (landmarks[L.THUMB_TIP].y + landmarks[L.INDEX_TIP].y) * 0.5,
@@ -293,30 +255,23 @@ export class GestureController {
     this.smoothedPinch.y += (wPinch.y - this.smoothedPinch.y) * pAlpha;
     this.smoothedPinch.z += (wPinch.z - this.smoothedPinch.z) * pAlpha;
 
-    // Analyze finger postures
     const fingers = this.getFingerStates(landmarks);
     let detectedGesture = 'OPEN PALM';
     let rawConfidence = 0.8;
 
-    // Classifier decision tree:
     if (this.velocityMagnitude > 45.0) {
-      // High speed swipe gesture
       detectedGesture = 'FAST SWIPE';
       rawConfidence = Math.min(1.0, this.velocityMagnitude / 70.0);
     } else if (fingers.pinchDistance < 0.075) {
-      // Pinch detected
       detectedGesture = 'PINCH';
       rawConfidence = Math.min(1.0, 1.0 - (fingers.pinchDistance / 0.075));
     } else if (fingers.index && !fingers.middle && !fingers.ring && !fingers.pinky) {
-      // Pointing with index finger
       detectedGesture = 'POINT';
       rawConfidence = 0.9;
     } else if (fingers.extendedCount <= 1 && fingers.pinchDistance > 0.08) {
-      // Closed fist
       detectedGesture = 'FIST';
       rawConfidence = 0.92;
     } else if (fingers.extendedCount >= 4) {
-      // Open palm
       detectedGesture = 'OPEN PALM';
       rawConfidence = 0.95;
     } else {
@@ -326,7 +281,6 @@ export class GestureController {
 
     this.updateSmoothedGesture(detectedGesture, rawConfidence);
 
-    // Calculate hand tilt for scene rotation
     const wrist = landmarks[L.WRIST];
     const middleMcp = landmarks[L.MIDDLE_MCP];
     const tiltX = (middleMcp.x - wrist.x);
@@ -351,9 +305,6 @@ export class GestureController {
     };
   }
 
-  /**
-   * Temporal smoothing with hysteresis to prevent gesture flickering
-   */
   updateSmoothedGesture(detected, confidence) {
     if (detected === this.gestureCandidate) {
       this.candidateFrames++;

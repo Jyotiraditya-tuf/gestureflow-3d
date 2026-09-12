@@ -1,7 +1,7 @@
 /**
- * GestureFlow 3D - Particle System Manager
- * Creates and updates high-performance THREE.Points with BufferGeometry,
- * additive blending, dynamic color palettes, and procedural glow sprites.
+ * GestureFlow 3D - Optimized Particle System Manager
+ * High-performance THREE.Points with BufferGeometry, formation caching,
+ * conditional GPU buffer uploads, and zero-allocation updates.
  */
 
 import * as THREE from 'three';
@@ -77,6 +77,13 @@ export class ParticleSystem {
     // Particle size slider
     this.baseParticleSize = 0.85;
 
+    // Cache of precomputed formation coordinates per count: Map<formationKey, {positions, colors}>
+    this.formationCache = new Map();
+
+    // Color morphing tracking to avoid redundant per-frame GPU buffer uploads
+    this.isColorMorphing = false;
+    this.colorMorphProgress = 1.0;
+
     // Allocate Typed Buffers
     this.positions = new Float32Array(this.count * 3);
     this.velocities = new Float32Array(this.count * 3);
@@ -114,6 +121,7 @@ export class ParticleSystem {
   setParticleCount(newCount) {
     if (newCount === this.count) return;
     this.count = newCount;
+    this.formationCache.clear(); // clear cached shapes for old count
 
     // Reallocate arrays
     this.positions = new Float32Array(this.count * 3);
@@ -127,41 +135,65 @@ export class ParticleSystem {
   }
 
   /**
+   * Retrieve cached formation or generate if absent
+   */
+  getFormationData(formationId) {
+    const formationDef = FORMATIONS[formationId] || FORMATIONS.sphere;
+    const cacheKey = `${formationDef.id}_${this.count}`;
+
+    if (this.formationCache.has(cacheKey)) {
+      return this.formationCache.get(cacheKey);
+    }
+
+    const data = formationDef.fn(this.count);
+    this.formationCache.set(cacheKey, data);
+    return data;
+  }
+
+  /**
    * Switch active formation with smooth morphing
    */
   setFormation(formationId, instant = false) {
     const formationDef = FORMATIONS[formationId] || FORMATIONS.sphere;
     this.currentFormationId = formationDef.id;
 
-    // Generate new mathematical coordinates & colors
-    const { positions: newTargets, colors: newCol } = formationDef.fn(this.count);
+    // Get cached or newly generated coordinates
+    const { positions: newTargets, colors: newCol } = this.getFormationData(this.currentFormationId);
 
     // Apply color theme or default formation colors
     const theme = COLOR_THEMES[this.currentThemeId];
+    const isRainbow = this.currentThemeId === 'rainbow';
+    const hasTheme = theme && theme.colors.length > 0;
+    const themeColors = hasTheme ? theme.colors : null;
+    const themeLength = themeColors ? themeColors.length : 1;
+
+    const tempColor = new THREE.Color();
 
     for (let i = 0; i < this.count; i++) {
       const idx = i * 3;
+      const idxY = idx + 1;
+      const idxZ = idx + 2;
 
       // Copy target positions
       this.targetPositions[idx] = newTargets[idx];
-      this.targetPositions[idx + 1] = newTargets[idx + 1];
-      this.targetPositions[idx + 2] = newTargets[idx + 2];
+      this.targetPositions[idxY] = newTargets[idxY];
+      this.targetPositions[idxZ] = newTargets[idxZ];
 
       // Compute target color
       let r = newCol[idx];
-      let g = newCol[idx + 1];
-      let b = newCol[idx + 2];
+      let g = newCol[idxY];
+      let b = newCol[idxZ];
 
-      if (this.currentThemeId === 'rainbow') {
+      if (isRainbow) {
         const hue = (i / this.count + (newTargets[idx] * 0.01)) % 1.0;
-        const color = new THREE.Color().setHSL(hue, 0.9, 0.6);
-        r = color.r;
-        g = color.g;
-        b = color.b;
-      } else if (theme && theme.colors.length > 0) {
-        const cIdx = i % theme.colors.length;
-        const c1 = theme.colors[cIdx];
-        const c2 = theme.colors[(cIdx + 1) % theme.colors.length];
+        tempColor.setHSL(hue, 0.9, 0.6);
+        r = tempColor.r;
+        g = tempColor.g;
+        b = tempColor.b;
+      } else if (hasTheme) {
+        const cIdx = i % themeLength;
+        const c1 = themeColors[cIdx];
+        const c2 = themeColors[(cIdx + 1) % themeLength];
         const blend = (i / this.count);
         r = c1.r * (1 - blend) + c2.r * blend;
         g = c1.g * (1 - blend) + c2.g * blend;
@@ -169,30 +201,38 @@ export class ParticleSystem {
       }
 
       this.targetColors[idx] = r;
-      this.targetColors[idx + 1] = g;
-      this.targetColors[idx + 2] = b;
+      this.targetColors[idxY] = g;
+      this.targetColors[idxZ] = b;
 
       if (instant) {
         // Instant teleport for first load or reset
         this.positions[idx] = newTargets[idx];
-        this.positions[idx + 1] = newTargets[idx + 1];
-        this.positions[idx + 2] = newTargets[idx + 2];
+        this.positions[idxY] = newTargets[idxY];
+        this.positions[idxZ] = newTargets[idxZ];
 
         this.velocities[idx] = 0;
-        this.velocities[idx + 1] = 0;
-        this.velocities[idx + 2] = 0;
+        this.velocities[idxY] = 0;
+        this.velocities[idxZ] = 0;
 
         this.currentColors[idx] = r;
-        this.currentColors[idx + 1] = g;
-        this.currentColors[idx + 2] = b;
+        this.currentColors[idxY] = g;
+        this.currentColors[idxZ] = b;
       }
 
       this.sizes[i] = this.baseParticleSize * (0.7 + 0.6 * Math.random());
     }
 
-    // Attach buffers to Three.js geometry
-    this.geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
-    this.geometry.setAttribute('color', new THREE.BufferAttribute(this.currentColors, 3));
+    if (instant) {
+      this.isColorMorphing = false;
+      this.colorMorphProgress = 1.0;
+      this.geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
+      this.geometry.setAttribute('color', new THREE.BufferAttribute(this.currentColors, 3));
+      this.geometry.attributes.position.needsUpdate = true;
+      this.geometry.attributes.color.needsUpdate = true;
+    } else {
+      this.isColorMorphing = true;
+      this.colorMorphProgress = 0.0;
+    }
   }
 
   /**
@@ -230,17 +270,33 @@ export class ParticleSystem {
   }
 
   /**
-   * Smooth color morphing and buffer commit per frame
+   * Smooth color morphing and conditional GPU buffer uploads
    */
   renderUpdate(dt = 0.016) {
-    const colorAlpha = Math.min(1.0, dt * 3.5);
+    // 1. Only process and upload colors when morphing
+    if (this.isColorMorphing) {
+      const colorAlpha = Math.min(1.0, dt * 3.5);
+      this.colorMorphProgress += colorAlpha;
 
-    // Color interpolation loop
-    for (let i = 0; i < this.count * 3; i++) {
-      this.currentColors[i] += (this.targetColors[i] - this.currentColors[i]) * colorAlpha;
+      let maxDiff = 0;
+      const totalFloats = this.count * 3;
+
+      for (let i = 0; i < totalFloats; i++) {
+        const diff = this.targetColors[i] - this.currentColors[i];
+        this.currentColors[i] += diff * colorAlpha;
+        const absDiff = diff < 0 ? -diff : diff;
+        if (absDiff > maxDiff) maxDiff = absDiff;
+      }
+
+      this.geometry.attributes.color.needsUpdate = true;
+
+      // When colors have converged, stop color updates to save CPU & GPU bus bandwidth
+      if (maxDiff < 0.005 || this.colorMorphProgress >= 1.0) {
+        this.isColorMorphing = false;
+      }
     }
 
+    // Positions always update during active physics
     this.geometry.attributes.position.needsUpdate = true;
-    this.geometry.attributes.color.needsUpdate = true;
   }
 }

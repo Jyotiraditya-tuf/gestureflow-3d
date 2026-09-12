@@ -1,12 +1,12 @@
 /**
- * GestureFlow 3D - Hand Tracking Manager (MediaPipe Hands & Camera)
- * Handles webcam permissions, video stream processing, hand skeleton rendering,
- * and seamless mouse/touch fallback when camera is unavailable.
+ * GestureFlow 3D - Optimized Hand Tracking Manager
+ * Decouples MediaPipe AI inference from the 60 FPS WebGL render loop,
+ * enforces an optimal 20-25 FPS vision cadence, throttles skeleton overlay drawing,
+ * and seamlessly provides continuous landmark smoothing.
  */
 
 import { HAND_LANDMARKS } from './gestureController.js';
 
-// Landmark connections for rendering hand skeleton
 export const HAND_CONNECTIONS = [
   // Thumb
   [0, 1], [1, 2], [2, 3], [3, 4],
@@ -31,7 +31,6 @@ export class HandTrackingManager {
 
     this.stream = null;
     this.hands = null;
-    this.cameraUtils = null;
     this.isRunning = false;
     this.isCameraActive = false;
     this.isMirrored = true;
@@ -40,6 +39,16 @@ export class HandTrackingManager {
     // Status: 'initializing' | 'active' | 'denied' | 'error' | 'fallback'
     this.status = 'initializing';
     this.statusMessage = 'Initializing vision system...';
+
+    // Inference Throttling & Decoupling (~24 FPS target for ML inference)
+    this.targetInferenceFps = 24;
+    this.inferenceInterval = 1000 / this.targetInferenceFps;
+    this.lastInferenceTime = 0;
+    this.isInferencing = false;
+    this.inferenceDuration = 0; // ms per inference for performance stats
+
+    // Cached results for continuous 60 FPS consumer loop
+    this.lastResults = null;
 
     // Mouse Fallback state
     this.mouseFallbackActive = false;
@@ -101,7 +110,7 @@ export class HandTrackingManager {
    * Dynamically loads MediaPipe scripts if not bundled
    */
   async ensureMediaPipeLoaded() {
-    if (window.Hands && window.Camera) return;
+    if (window.Hands) return;
 
     const loadScript = (src) => {
       return new Promise((resolve, reject) => {
@@ -129,7 +138,7 @@ export class HandTrackingManager {
   }
 
   /**
-   * Request webcam stream
+   * Request webcam stream at optimal 640x480 resolution
    */
   async startCamera() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -161,42 +170,47 @@ export class HandTrackingManager {
     this.statusMessage = 'Webcam tracking active';
     this.isRunning = true;
 
-    // Use MediaPipe Camera helper or custom requestVideoFrameCallback / rAF loop
-    if (window.Camera) {
-      this.cameraUtils = new window.Camera(this.video, {
-        onFrame: async () => {
-          if (this.hands && this.isRunning && this.video.videoWidth > 0) {
-            await this.hands.send({ image: this.video });
-          }
-        },
-        width: 640,
-        height: 480
-      });
-      this.cameraUtils.start();
-    } else {
-      this.startCustomVideoLoop();
-    }
+    // Start decoupled async inference loop
+    this.startDecoupledInferenceLoop();
   }
 
   /**
-   * Backup video processing loop if CameraUtils is not present
+   * Decoupled asynchronous inference loop running at target 20-25 FPS.
+   * Keeps main 60 FPS WebGL thread completely unblocked!
    */
-  startCustomVideoLoop() {
-    let isProcessing = false;
-    const processFrame = async () => {
+  startDecoupledInferenceLoop() {
+    const processLoop = async () => {
       if (!this.isRunning) return;
-      if (this.hands && !isProcessing && this.video.readyState >= 2) {
-        isProcessing = true;
+
+      const now = performance.now();
+      const elapsed = now - this.lastInferenceTime;
+
+      if (
+        this.hands &&
+        !this.isInferencing &&
+        elapsed >= this.inferenceInterval &&
+        this.video.readyState >= 2 &&
+        this.video.videoWidth > 0
+      ) {
+        this.isInferencing = true;
+        this.lastInferenceTime = now;
+        const startT = performance.now();
+
         try {
           await this.hands.send({ image: this.video });
         } catch (e) {
-          // Frame skip
+          // Frame skip gracefully
         }
-        isProcessing = false;
+
+        this.inferenceDuration = performance.now() - startT;
+        this.isInferencing = false;
       }
-      requestAnimationFrame(processFrame);
+
+      // Schedule next check (using timeout or rAF for zero CPU burn)
+      setTimeout(processLoop, 8);
     };
-    requestAnimationFrame(processFrame);
+
+    processLoop();
   }
 
   /**
@@ -208,10 +222,6 @@ export class HandTrackingManager {
       this.stream.getTracks().forEach((track) => track.stop());
       this.stream = null;
     }
-    if (this.cameraUtils) {
-      this.cameraUtils.stop();
-      this.cameraUtils = null;
-    }
     this.isCameraActive = false;
     this.status = 'fallback';
     this.statusMessage = 'Camera stopped. Mouse controls active.';
@@ -222,7 +232,9 @@ export class HandTrackingManager {
    * Handle MediaPipe detection results
    */
   handleResults(results) {
-    // Render skeleton overlay on PIP canvas
+    this.lastResults = results;
+
+    // Render skeleton overlay on PIP canvas only when preview is visible
     if (this.ctx && this.showPreview) {
       this.drawSkeletonOverlay(results);
     }
@@ -257,19 +269,20 @@ export class HandTrackingManager {
       const landmarks = results.multiHandLandmarks[h];
       const isFirstHand = h === 0;
 
-      // 1. Draw connecting bones with futuristic glowing lines
-      ctx.lineWidth = 2.5;
+      // 1. Draw connecting bones with glowing lines
+      ctx.lineWidth = 2.0;
       ctx.lineCap = 'round';
-      ctx.shadowBlur = 8;
+      ctx.shadowBlur = 6;
       ctx.shadowColor = isFirstHand ? '#00f2fe' : '#ff007f';
 
-      for (const [startIdx, endIdx] of HAND_CONNECTIONS) {
+      for (let c = 0; c < HAND_CONNECTIONS.length; c++) {
+        const [startIdx, endIdx] = HAND_CONNECTIONS[c];
         const p1 = landmarks[startIdx];
         const p2 = landmarks[endIdx];
 
         ctx.strokeStyle = isFirstHand
-          ? 'rgba(0, 242, 254, 0.75)'
-          : 'rgba(255, 0, 127, 0.75)';
+          ? 'rgba(0, 242, 254, 0.8)'
+          : 'rgba(255, 0, 127, 0.8)';
 
         ctx.beginPath();
         ctx.moveTo(p1.x * canvas.width, p1.y * canvas.height);
@@ -277,31 +290,29 @@ export class HandTrackingManager {
         ctx.stroke();
       }
 
-      // 2. Draw glowing joint landmark dots
+      // 2. Draw landmark dots
       for (let i = 0; i < landmarks.length; i++) {
         const p = landmarks[i];
         const x = p.x * canvas.width;
         const y = p.y * canvas.height;
 
-        let radius = 3;
+        let radius = 2.5;
         let color = '#ffffff';
 
-        // Highlight fingertips specially
+        // Highlight fingertips
         if (i === 4) {
-          // Thumb tip
-          radius = 5.5;
+          radius = 4.5;
           color = '#ff007f';
         } else if (i === 8) {
-          // Index tip
-          radius = 5.5;
+          radius = 4.5;
           color = '#00f2fe';
         } else if (i === 12 || i === 16 || i === 20) {
-          radius = 4.5;
+          radius = 3.5;
           color = '#a855f7';
         }
 
         ctx.fillStyle = color;
-        ctx.shadowBlur = 10;
+        ctx.shadowBlur = 8;
         ctx.shadowColor = color;
         ctx.beginPath();
         ctx.arc(x, y, radius, 0, 2 * Math.PI);
@@ -313,16 +324,17 @@ export class HandTrackingManager {
       const index = landmarks[8];
       const dx = thumb.x - index.x;
       const dy = thumb.y - index.y;
-      const pinchDist = Math.sqrt(dx * dx + dy * dy);
+      const pinchDistSq = dx * dx + dy * dy;
 
-      if (pinchDist < 0.08) {
+      if (pinchDistSq < 0.0064) { // 0.08^2
+        const pinchDist = Math.sqrt(pinchDistSq);
         const midX = (thumb.x + index.x) * 0.5 * canvas.width;
         const midY = (thumb.y + index.y) * 0.5 * canvas.height;
 
         ctx.strokeStyle = '#ffd700';
         ctx.lineWidth = 2;
         ctx.shadowColor = '#ffd700';
-        ctx.shadowBlur = 12;
+        ctx.shadowBlur = 10;
         ctx.beginPath();
         ctx.arc(midX, midY, 10 * (1.0 - pinchDist / 0.08) + 4, 0, 2 * Math.PI);
         ctx.stroke();
@@ -400,27 +412,21 @@ export class HandTrackingManager {
     const normX = this.mouseState.x / window.innerWidth;
     const normY = this.mouseState.y / window.innerHeight;
 
-    // Build simulated 21 landmarks
     const landmarks = [];
-    const isPinching = this.mouseState.isDown; // Left click = pinch attractor
-    const isExploding = this.mouseState.isRightDown; // Right click = open palm blast
-
-    // Simulated pinch distance
+    const isPinching = this.mouseState.isDown;
+    const isExploding = this.mouseState.isRightDown;
     const thumbDist = isPinching ? 0.02 : 0.12;
 
     for (let i = 0; i < 21; i++) {
       let ox = 0, oy = 0, oz = 0;
 
       if (i === 4) {
-        // Thumb
         ox = -thumbDist * 0.5;
         oy = thumbDist * 0.5;
       } else if (i === 8) {
-        // Index
         ox = isPinching ? thumbDist * 0.5 : 0.0;
         oy = -0.06;
       } else if (i === 12 || i === 16 || i === 20) {
-        // Other fingers curled if pinching or pointing
         oy = isExploding ? -0.07 : 0.03;
         ox = (i - 12) * 0.02;
       }

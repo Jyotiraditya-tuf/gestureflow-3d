@@ -1,7 +1,7 @@
 /**
- * GestureFlow 3D - User Interface Manager
- * Manages futuristic glassmorphic HUD, gesture badges, sliders,
- * formation switches, color palettes, PIP webcam overlay, and shortcuts.
+ * GestureFlow 3D - Optimized User Interface Manager
+ * Dirty-checked DOM updates, Quality Mode selector (High/Med/Low/Auto),
+ * Performance Diagnostics instrumentation, and responsive HUD.
  */
 
 import { FORMATIONS } from './formations.js';
@@ -13,6 +13,23 @@ export class UIManager {
     this.isUiVisible = true;
     this.isPaused = false;
     this.isPipMinimized = false;
+    this.showPerfHUD = false;
+
+    // DOM state cache for dirty-checking
+    this.domCache = {
+      fps: '',
+      particleCount: '',
+      cameraStatusClass: '',
+      cameraStatusText: '',
+      gestureIcon: '',
+      gestureName: '',
+      gestureDesc: '',
+      confidenceWidth: '',
+      activeFormation: 'galaxy',
+      activeTheme: 'nebula',
+      activeQuality: 'auto',
+      perfStats: ''
+    };
 
     this.dom = {};
     this.cacheDomElements();
@@ -35,6 +52,9 @@ export class UIManager {
       gestureName: document.getElementById('gesture-name'),
       gestureDescription: document.getElementById('gesture-description'),
       gestureConfidenceFill: document.getElementById('gesture-confidence-fill'),
+
+      // Quality Buttons
+      qualityPills: document.querySelectorAll('.quality-pill'),
 
       // Control inputs
       formationPills: document.querySelectorAll('.formation-pill'),
@@ -63,6 +83,11 @@ export class UIManager {
       btnFullscreen: document.getElementById('btn-fullscreen'),
       btnHelp: document.getElementById('btn-help'),
       btnToggleHud: document.getElementById('btn-toggle-hud'),
+      btnPerf: document.getElementById('btn-perf'),
+
+      // Performance HUD
+      perfOverlay: document.getElementById('perf-overlay'),
+      perfContent: document.getElementById('perf-content'),
 
       // PIP Webcam
       pipContainer: document.getElementById('webcam-pip'),
@@ -106,7 +131,21 @@ export class UIManager {
       });
     }
 
-    // 3. Sliders
+    // 3. Quality Presets
+    if (this.dom.qualityPills) {
+      this.dom.qualityPills.forEach((pill) => {
+        pill.addEventListener('click', () => {
+          const quality = pill.dataset.quality;
+          this.setActiveQualityPill(quality);
+          if (this.callbacks.onQualityChange) {
+            this.callbacks.onQualityChange(quality);
+          }
+          this.showToast(`Quality: ${quality.toUpperCase()}`);
+        });
+      });
+    }
+
+    // 4. Sliders
     if (this.dom.sliderParticleCount) {
       this.dom.sliderParticleCount.addEventListener('input', (e) => {
         const count = parseInt(e.target.value, 10);
@@ -157,7 +196,7 @@ export class UIManager {
       });
     }
 
-    // 4. Action Buttons
+    // 5. Action Buttons
     if (this.dom.btnPause) {
       this.dom.btnPause.addEventListener('click', () => this.togglePause());
     }
@@ -196,11 +235,11 @@ export class UIManager {
       this.dom.btnCloseHelp.addEventListener('click', () => this.toggleHelpModal(false));
     }
 
-    if (this.dom.btnToggleHud) {
-      this.dom.btnToggleHud.addEventListener('click', () => this.toggleHud());
+    if (this.dom.btnPerf) {
+      this.dom.btnPerf.addEventListener('click', () => this.togglePerfHUD());
     }
 
-    // 5. PIP Controls
+    // 6. PIP Controls
     if (this.dom.btnTogglePip && this.dom.pipContainer) {
       this.dom.btnTogglePip.addEventListener('click', () => {
         this.isPipMinimized = !this.isPipMinimized;
@@ -224,14 +263,11 @@ export class UIManager {
       });
     }
 
-    // 6. Global Keyboard Shortcuts
+    // 7. Global Keyboard Shortcuts
     window.addEventListener('keydown', (e) => {
-      // Don't intercept if user is typing in an input
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
       const key = e.key;
-
-      // 1-9 for Formations
       const formationKeys = {
         '1': 'sphere',
         '2': 'galaxy',
@@ -264,6 +300,8 @@ export class UIManager {
         }
       } else if (key === 'h' || key === 'H') {
         this.toggleHud();
+      } else if (key === 'p' || key === 'P') {
+        this.togglePerfHUD();
       } else if (key === 'f' || key === 'F') {
         this.toggleFullscreen();
       } else if (key === 's' || key === 'S') {
@@ -281,6 +319,9 @@ export class UIManager {
   }
 
   setActiveFormationPill(formationId) {
+    if (this.domCache.activeFormation === formationId) return;
+    this.domCache.activeFormation = formationId;
+
     if (!this.dom.formationPills) return;
     this.dom.formationPills.forEach((pill) => {
       pill.classList.toggle('active', pill.dataset.formation === formationId);
@@ -288,34 +329,74 @@ export class UIManager {
   }
 
   setActiveThemePill(themeId) {
+    if (this.domCache.activeTheme === themeId) return;
+    this.domCache.activeTheme = themeId;
+
     if (!this.dom.colorThemePills) return;
     this.dom.colorThemePills.forEach((pill) => {
       pill.classList.toggle('active', pill.dataset.theme === themeId);
     });
   }
 
+  setActiveQualityPill(quality) {
+    if (this.domCache.activeQuality === quality) return;
+    this.domCache.activeQuality = quality;
+
+    if (!this.dom.qualityPills) return;
+    this.dom.qualityPills.forEach((pill) => {
+      pill.classList.toggle('active', pill.dataset.quality === quality);
+    });
+  }
+
   updateCameraStatus(status, message) {
     if (!this.dom.cameraBadge || !this.dom.cameraStatusText) return;
 
-    this.dom.cameraBadge.className = 'status-badge';
-    this.dom.cameraBadge.classList.add(`status-${status}`);
-    this.dom.cameraStatusText.textContent = message;
+    const newClass = `status-badge status-${status}`;
+    if (this.domCache.cameraStatusClass !== newClass) {
+      this.domCache.cameraStatusClass = newClass;
+      this.dom.cameraBadge.className = newClass;
+    }
+
+    if (this.domCache.cameraStatusText !== message) {
+      this.domCache.cameraStatusText = message;
+      this.dom.cameraStatusText.textContent = message;
+    }
   }
 
   updateGestureDisplay(gestureState) {
     if (!gestureState) return;
-    if (this.dom.gestureIcon) this.dom.gestureIcon.textContent = gestureState.icon || '✨';
-    if (this.dom.gestureName) this.dom.gestureName.textContent = gestureState.title || gestureState.name;
-    if (this.dom.gestureDescription) this.dom.gestureDescription.textContent = gestureState.description || '';
-    if (this.dom.gestureConfidenceFill) {
-      const pct = Math.round((gestureState.confidence || 0.8) * 100);
-      this.dom.gestureConfidenceFill.style.width = `${pct}%`;
+
+    const icon = gestureState.icon || '✨';
+    const name = gestureState.title || gestureState.name;
+    const desc = gestureState.description || '';
+    const pct = `${Math.round((gestureState.confidence || 0.8) * 100)}%`;
+
+    if (this.dom.gestureIcon && this.domCache.gestureIcon !== icon) {
+      this.domCache.gestureIcon = icon;
+      this.dom.gestureIcon.textContent = icon;
+    }
+
+    if (this.dom.gestureName && this.domCache.gestureName !== name) {
+      this.domCache.gestureName = name;
+      this.dom.gestureName.textContent = name;
+    }
+
+    if (this.dom.gestureDescription && this.domCache.gestureDesc !== desc) {
+      this.domCache.gestureDesc = desc;
+      this.dom.gestureDescription.textContent = desc;
+    }
+
+    if (this.dom.gestureConfidenceFill && this.domCache.confidenceWidth !== pct) {
+      this.domCache.confidenceWidth = pct;
+      this.dom.gestureConfidenceFill.style.width = pct;
     }
   }
 
   updateStats(fps, particleCount) {
-    if (this.dom.fpsCounter) {
-      this.dom.fpsCounter.textContent = `${Math.round(fps)} FPS`;
+    const fpsStr = `${Math.round(fps)} FPS`;
+    if (this.dom.fpsCounter && this.domCache.fps !== fpsStr) {
+      this.domCache.fps = fpsStr;
+      this.dom.fpsCounter.textContent = fpsStr;
       if (fps < 30) {
         this.dom.fpsCounter.style.color = '#ef4444';
       } else if (fps < 50) {
@@ -324,9 +405,37 @@ export class UIManager {
         this.dom.fpsCounter.style.color = '#10b981';
       }
     }
-    if (this.dom.particleCountBadge) {
-      this.dom.particleCountBadge.textContent = `${particleCount.toLocaleString()} particles`;
+
+    const pStr = `${particleCount.toLocaleString()} particles`;
+    if (this.dom.particleCountBadge && this.domCache.particleCount !== pStr) {
+      this.domCache.particleCount = pStr;
+      this.dom.particleCountBadge.textContent = pStr;
     }
+  }
+
+  updatePerfHUD(metrics) {
+    if (!this.showPerfHUD || !this.dom.perfContent) return;
+
+    const { frameTime, physicsTime, visionTime, renderTime, fps, particles } = metrics;
+    const text = `FPS: ${Math.round(fps)} | Frame: ${frameTime.toFixed(1)}ms
+Physics: ${physicsTime.toFixed(1)}ms | Vision: ${visionTime.toFixed(1)}ms | Render: ${renderTime.toFixed(1)}ms
+Particles: ${particles.toLocaleString()}`;
+
+    if (this.domCache.perfStats !== text) {
+      this.domCache.perfStats = text;
+      this.dom.perfContent.textContent = text;
+    }
+  }
+
+  togglePerfHUD() {
+    this.showPerfHUD = !this.showPerfHUD;
+    if (this.dom.perfOverlay) {
+      this.dom.perfOverlay.classList.toggle('active', this.showPerfHUD);
+    }
+    if (this.dom.btnPerf) {
+      this.dom.btnPerf.classList.toggle('active', this.showPerfHUD);
+    }
+    this.showToast(this.showPerfHUD ? 'Performance Diagnostics: ON [P]' : 'Performance Diagnostics: OFF');
   }
 
   togglePause() {

@@ -1,7 +1,7 @@
 /**
- * GestureFlow 3D - Main Application Orchestrator
- * Integrates Three.js 3D rendering, Particle Physics, MediaPipe Hands,
- * Glassmorphic HUD, and Audio Synthesis into a 60 FPS experience.
+ * GestureFlow 3D - Optimized Main Application Orchestrator
+ * High-framerate 60 FPS loop with decoupled vision inference,
+ * adaptive performance scaling, performance telemetry, and capped pixel ratio.
  */
 
 import * as THREE from 'three';
@@ -21,9 +21,23 @@ class App {
     // Performance & simulation state
     this.isPaused = false;
     this.fps = 60;
+    this.fpsMovingAverage = 60;
     this.frameCount = 0;
     this.lastFpsUpdate = performance.now();
-    this.lowFpsDuration = 0;
+    
+    // Quality Mode: 'auto' | 'high' | 'medium' | 'low'
+    this.qualityMode = 'auto';
+    this.autoTuneCooldown = 0;
+
+    // Performance Instrumentation
+    this.perfMetrics = {
+      fps: 60,
+      frameTime: 16.6,
+      physicsTime: 2.0,
+      visionTime: 0,
+      renderTime: 3.0,
+      particles: 20000
+    };
 
     // Three.js Core
     this.scene = null;
@@ -58,27 +72,24 @@ class App {
     this.setupWindowEvents();
     this.startAnimationLoop();
 
-    // Start vision tracking
+    // Start vision tracking in decoupled mode
     await this.handTracker.initialize();
     this.updateCameraStatusBadge();
   }
 
   /**
-   * Initialize Three.js WebGL Renderer, Scene, Camera
+   * Initialize Three.js WebGL Renderer with performance capped pixelRatio
    */
   initThree() {
     const width = window.innerWidth;
     const height = window.innerHeight;
 
-    // 1. Scene
     this.scene = new THREE.Scene();
     this.scene.fog = new THREE.FogExp2(0x050711, 0.007);
 
-    // 2. Camera
     this.camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
     this.camera.position.set(0, 0, 55);
 
-    // 3. Renderer with high performance settings
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvas,
       antialias: true,
@@ -87,22 +98,22 @@ class App {
       depth: true
     });
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Cap pixel ratio to 1.5 to prevent high-DPI fillrate bottlenecks
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.setClearColor(0x050711, 1);
   }
 
   /**
-   * Add deep ambient starry backdrop for immersive space depth
+   * Starry backdrop with low particle footprint
    */
   initSceneBackdrop() {
-    const starCount = 1500;
+    const starCount = 1000;
     const starGeo = new THREE.BufferGeometry();
     const starPos = new Float32Array(starCount * 3);
     const starCol = new Float32Array(starCount * 3);
 
     for (let i = 0; i < starCount; i++) {
       const idx = i * 3;
-      // Random sphere shell far away
       const u = Math.random();
       const v = Math.random();
       const theta = u * 2.0 * Math.PI;
@@ -136,29 +147,20 @@ class App {
   }
 
   /**
-   * Instantiate all modular subsystems
+   * Instantiate subsystems
    */
   initSubsystems() {
-    // 1. Particle System (~20,000 particles by default)
     this.particles = new ParticleSystem(this.scene, 20000);
-
-    // 2. Physics Engine
     this.physics = new PhysicsEngine();
-
-    // 3. Gesture Controller
     this.gestureCtrl = new GestureController();
-
-    // 4. Ambient Audio Synthesizer
     this.audio = new AmbientSynthesizer();
 
-    // 5. Hand Tracking Manager
     this.handTracker = new HandTrackingManager(
       this.video,
       this.skeletonCanvas,
       (results) => this.onHandResults(results)
     );
 
-    // 6. Glassmorphism UI Manager
     this.ui = new UIManager({
       onFormationChange: (formationId) => {
         this.particles.setFormation(formationId);
@@ -166,7 +168,12 @@ class App {
       onThemeChange: (themeId) => {
         this.particles.setColorTheme(themeId);
       },
+      onQualityChange: (quality) => {
+        this.setQualityPreset(quality);
+      },
       onParticleCountChange: (count) => {
+        this.qualityMode = 'custom';
+        this.ui.setActiveQualityPill('custom');
         this.particles.setParticleCount(count);
       },
       onParticleSizeChange: (size) => {
@@ -205,15 +212,46 @@ class App {
     });
   }
 
-  /**
-   * Callback fired by MediaPipe Hands when new landmarks arrive
-   */
+  setQualityPreset(preset) {
+    this.qualityMode = preset;
+    let count = 20000;
+    let pixelRatio = 1.5;
+
+    switch (preset) {
+      case 'high':
+        count = 30000;
+        pixelRatio = 1.5;
+        break;
+      case 'medium':
+        count = 18000;
+        pixelRatio = 1.5;
+        break;
+      case 'low':
+        count = 8000;
+        pixelRatio = 1.25;
+        break;
+      case 'auto':
+        count = 20000;
+        pixelRatio = 1.5;
+        break;
+    }
+
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatio));
+    this.particles.setParticleCount(count);
+
+    if (this.ui.dom.sliderParticleCount) {
+      this.ui.dom.sliderParticleCount.value = count;
+      if (this.ui.dom.valParticleCount) {
+        this.ui.dom.valParticleCount.textContent = count.toLocaleString();
+      }
+    }
+  }
+
   onHandResults(results) {
     const processed = this.gestureCtrl.process(results, performance.now());
     this.currentGestureState = processed.gesture;
     this.currentHandData = processed.handData;
 
-    // Update UI gesture card
     this.ui.updateGestureDisplay(this.currentGestureState);
 
     // Hand tilt driving scene camera rotation
@@ -246,22 +284,20 @@ class App {
     this.ui.updateCameraStatus(status, message);
   }
 
-  /**
-   * Window and resize events
-   */
   setupWindowEvents() {
+    let resizeTimeout;
     window.addEventListener('resize', () => {
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      this.camera.aspect = w / h;
-      this.camera.updateProjectionMatrix();
-      this.renderer.setSize(w, h);
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        this.camera.aspect = w / h;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(w, h);
+      }, 100);
     });
   }
 
-  /**
-   * 4K / High resolution canvas screenshot capture
-   */
   takeScreenshot() {
     this.renderer.render(this.scene, this.camera);
     const dataUrl = this.canvas.toDataURL('image/png');
@@ -273,7 +309,7 @@ class App {
   }
 
   /**
-   * Main 60 FPS Render & Simulation Loop
+   * Main 60 FPS Render Loop
    */
   startAnimationLoop() {
     let lastTime = performance.now();
@@ -281,39 +317,51 @@ class App {
     const animate = (currentTime) => {
       requestAnimationFrame(animate);
 
+      const frameStart = performance.now();
       const dt = Math.min(0.05, (currentTime - lastTime) / 1000);
       lastTime = currentTime;
 
-      // 1. Calculate FPS & Auto-throttle if needed
+      // 1. Calculate FPS & Moving Average
       this.frameCount++;
-      if (currentTime - this.lastFpsUpdate >= 500) {
+      if (currentTime - this.lastFpsUpdate >= 250) {
         this.fps = (this.frameCount * 1000) / (currentTime - this.lastFpsUpdate);
+        this.fpsMovingAverage = this.fpsMovingAverage * 0.7 + this.fps * 0.3;
         this.frameCount = 0;
         this.lastFpsUpdate = currentTime;
-        this.ui.updateStats(this.fps, this.particles.count);
+        this.ui.updateStats(this.fpsMovingAverage, this.particles.count);
 
-        // Adaptive performance: If FPS stays under 32 for > 3 seconds on low-spec device, optimize
-        if (this.fps < 32 && this.particles.count > 10000) {
-          this.lowFpsDuration += 0.5;
-          if (this.lowFpsDuration >= 3.0) {
-            const reducedCount = Math.max(8000, Math.floor(this.particles.count * 0.75));
-            this.particles.setParticleCount(reducedCount);
-            if (this.ui.dom.sliderParticleCount) {
-              this.ui.dom.sliderParticleCount.value = reducedCount;
-              if (this.ui.dom.valParticleCount) {
-                this.ui.dom.valParticleCount.textContent = reducedCount.toLocaleString();
+        // Adaptive performance controller in 'auto' mode
+        if (this.qualityMode === 'auto') {
+          this.autoTuneCooldown++;
+          if (this.autoTuneCooldown >= 6) { // check every 1.5 seconds
+            if (this.fpsMovingAverage < 45 && this.particles.count > 10000) {
+              const newCount = Math.max(8000, Math.floor(this.particles.count * 0.8));
+              this.particles.setParticleCount(newCount);
+              if (this.ui.dom.sliderParticleCount) {
+                this.ui.dom.sliderParticleCount.value = newCount;
+                if (this.ui.dom.valParticleCount) {
+                  this.ui.dom.valParticleCount.textContent = newCount.toLocaleString();
+                }
+              }
+            } else if (this.fpsMovingAverage >= 58 && this.particles.count < 24000) {
+              const newCount = Math.min(24000, this.particles.count + 2000);
+              this.particles.setParticleCount(newCount);
+              if (this.ui.dom.sliderParticleCount) {
+                this.ui.dom.sliderParticleCount.value = newCount;
+                if (this.ui.dom.valParticleCount) {
+                  this.ui.dom.valParticleCount.textContent = newCount.toLocaleString();
+                }
               }
             }
-            this.ui.showToast(`Auto-optimized particles to ${reducedCount.toLocaleString()} for smooth 60 FPS`);
-            this.lowFpsDuration = 0;
+            this.autoTuneCooldown = 0;
           }
-        } else {
-          this.lowFpsDuration = 0;
         }
       }
 
-      // 2. Physics & Particle Simulation (if not paused)
+      // 2. Physics Step & Timing
+      let physicsDuration = 0;
       if (!this.isPaused) {
+        const pStart = performance.now();
         this.physics.update(
           this.particles.positions,
           this.particles.velocities,
@@ -323,15 +371,14 @@ class App {
           this.currentHandData,
           dt
         );
-
         this.particles.renderUpdate(dt);
+        physicsDuration = performance.now() - pStart;
       }
 
       // 3. Smooth Camera Tilt and Ambient Slow Orbit
       this.currentCameraRotX += (this.targetCameraRotX - this.currentCameraRotX) * 0.08;
       this.currentCameraRotY += (this.targetCameraRotY - this.currentCameraRotY) * 0.08;
 
-      // Ambient slow cosmic rotation
       if (this.particles.points) {
         this.particles.points.rotation.y += 0.0015;
         this.particles.points.rotation.x = this.currentCameraRotX;
@@ -342,11 +389,26 @@ class App {
         this.starField.rotation.y += 0.0003;
       }
 
-      // 4. Update Audio Synthesizer
+      // 4. Update Audio Synthesizer (throttled internally)
       this.audio.update(this.currentGestureState, this.currentHandData);
 
-      // 5. Render Three.js Scene
+      // 5. Render Three.js Scene & Timing
+      const rStart = performance.now();
       this.renderer.render(this.scene, this.camera);
+      const renderDuration = performance.now() - rStart;
+
+      const totalFrameDuration = performance.now() - frameStart;
+
+      // 6. Update Performance Telemetry HUD if active
+      if (this.ui.showPerfHUD) {
+        this.perfMetrics.fps = this.fpsMovingAverage;
+        this.perfMetrics.frameTime = totalFrameDuration;
+        this.perfMetrics.physicsTime = physicsDuration;
+        this.perfMetrics.visionTime = this.handTracker.inferenceDuration;
+        this.perfMetrics.renderTime = renderDuration;
+        this.perfMetrics.particles = this.particles.count;
+        this.ui.updatePerfHUD(this.perfMetrics);
+      }
     };
 
     requestAnimationFrame(animate);

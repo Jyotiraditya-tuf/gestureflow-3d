@@ -29,7 +29,7 @@
             <div>
               <div class="brand-title">GestureFlow 3D</div>
             </div>
-            <span class="brand-badge">PRO 3.0</span>
+            <span class="brand-badge">60 FPS OPTIMIZED</span>
           </div>
 
           <div id="camera-status-badge" class="status-badge status-initializing">
@@ -43,6 +43,14 @@
             <span id="particle-count-badge">20,000 particles</span>
           </div>
         </header>
+
+        <!-- Performance Telemetry Overlay (Collapsible with 'P' or button) -->
+        <div id="perf-overlay" class="perf-overlay interactive-panel">
+          <div class="perf-header">⚡ Real-time Telemetry</div>
+          <pre id="perf-content">FPS: 60 | Frame: 16.6ms
+Physics: 1.8ms | Vision: 0.0ms | Render: 2.5ms
+Particles: 20,000</pre>
+        </div>
 
         <!-- Active Gesture Card (Top Right) -->
         <aside class="gesture-card interactive-panel">
@@ -64,6 +72,19 @@
         <!-- Left Interactive Control Dock -->
         <aside class="control-dock interactive-panel">
           
+          <!-- Quality Presets -->
+          <div>
+            <div class="section-label">
+              <span>Performance & Quality</span>
+            </div>
+            <div class="quality-grid">
+              <button class="quality-pill active" data-quality="auto">Auto (60 FPS)</button>
+              <button class="quality-pill" data-quality="high">High (30k)</button>
+              <button class="quality-pill" data-quality="medium">Med (18k)</button>
+              <button class="quality-pill" data-quality="low">Low (8k)</button>
+            </div>
+          </div>
+
           <!-- Formations Selector -->
           <div>
             <div class="section-label">
@@ -192,6 +213,9 @@
               <button id="btn-audio" class="btn-action">
                 <span class="icon">🔊</span> Synth [M]
               </button>
+              <button id="btn-perf" class="btn-action">
+                <span class="icon">⚡</span> Stats [P]
+              </button>
               <button id="btn-screenshot" class="btn-action">
                 <span class="icon">📸</span> 4K Capture
               </button>
@@ -240,7 +264,7 @@
               <div class="guide-icon">✋</div>
               <div>
                 <div class="guide-title">OPEN PALM</div>
-                <div class="guide-desc">All fingers extended. Creates an outward spherical repulsion wave and moves the particle field center.</div>
+                <div class="guide-desc">All fingers extended. Outward spherical repulsion wave; moves particle field center.</div>
               </div>
             </div>
 
@@ -256,7 +280,7 @@
               <div class="guide-icon">🤏</div>
               <div>
                 <div class="guide-title">PINCH</div>
-                <div class="guide-desc">Bring thumb & index fingertips close. Concentrates particles into a gravitational singularity at the pinch point.</div>
+                <div class="guide-desc">Thumb & index fingertips close. Concentrates particles into a gravitational singularity at pinch point.</div>
               </div>
             </div>
 
@@ -264,7 +288,7 @@
               <div class="guide-icon">👉</div>
               <div>
                 <div class="guide-title">POINTING BEAM</div>
-                <div class="guide-desc">Extend index finger. Generates a directional particle stream and vortex trailing your fingertip.</div>
+                <div class="guide-desc">Extend index finger. Directional particle stream and vortex trailing your fingertip.</div>
               </div>
             </div>
 
@@ -272,7 +296,7 @@
               <div class="guide-icon">🙌</div>
               <div>
                 <div class="guide-title">TWO HANDS</div>
-                <div class="guide-desc">Show both hands. Distance between hands dynamically scales the particle cloud and forms a connecting vortex tunnel.</div>
+                <div class="guide-desc">Show both hands. Distance between hands scales the particle cloud and creates a connecting vortex tunnel.</div>
               </div>
             </div>
 
@@ -280,7 +304,7 @@
               <div class="guide-icon">💨</div>
               <div>
                 <div class="guide-title">FAST KINETIC SWIPE</div>
-                <div class="guide-desc">Rapid hand movement imparts momentum wind blasts and shockwave turbulence across the universe.</div>
+                <div class="guide-desc">Rapid hand movement imparts momentum wind blasts and shockwave turbulence.</div>
               </div>
             </div>
           </div>
@@ -304,12 +328,16 @@
               <td>Toggle reactive ambient audio synthesizer</td>
             </tr>
             <tr>
+              <td><kbd>P</kbd></td>
+              <td>Toggle Performance Telemetry overlay</td>
+            </tr>
+            <tr>
               <td><kbd>S</kbd></td>
               <td>Export high-resolution 4K PNG screenshot</td>
             </tr>
             <tr>
               <td><kbd>H</kbd></td>
-              <td>Toggle HUD visibility for clean screenshot mode</td>
+              <td>Toggle HUD visibility for clean presentation mode</td>
             </tr>
             <tr>
               <td><kbd>F</kbd></td>
