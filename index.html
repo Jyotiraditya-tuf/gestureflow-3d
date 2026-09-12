@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GestureFlow 3D - Hand Gesture Controlled 3D Particle Universe</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/src/styles.css" />
+
+    <!-- Google MediaPipe Hands & Camera Utils CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <div id="app">
+      <!-- 3D WebGL Canvas -->
+      <canvas id="webgl-canvas"></canvas>
+
+      <!-- Glassmorphic HUD Overlay -->
+      <div id="hud-container">
+        
+        <!-- Header / Brand Bar -->
+        <header class="hud-header interactive-panel">
+          <div class="brand-logo">
+            <div class="logo-symbol">✨</div>
+            <div>
+              <div class="brand-title">GestureFlow 3D</div>
+            </div>
+            <span class="brand-badge">PRO 3.0</span>
+          </div>
+
+          <div id="camera-status-badge" class="status-badge status-initializing">
+            <div class="status-dot"></div>
+            <span id="camera-status-text">Initializing Vision AI...</span>
+          </div>
+
+          <div class="stats-group">
+            <span id="fps-counter">60 FPS</span>
+            <span>•</span>
+            <span id="particle-count-badge">20,000 particles</span>
+          </div>
+        </header>
+
+        <!-- Active Gesture Card (Top Right) -->
+        <aside class="gesture-card interactive-panel">
+          <div class="gesture-header">
+            <span class="section-label" style="margin-bottom: 0;">Active Gesture <span class="hint">Live AI</span></span>
+          </div>
+          <div class="gesture-main">
+            <div id="gesture-icon" class="gesture-icon-box">✋</div>
+            <div>
+              <div id="gesture-name" class="gesture-info-title">OPEN PALM</div>
+              <div id="gesture-description" class="gesture-info-desc">Radial expansion force field; shifts particle center</div>
+            </div>
+          </div>
+          <div class="gesture-confidence-bar">
+            <div id="gesture-confidence-fill" class="confidence-fill"></div>
+          </div>
+        </aside>
+
+        <!-- Left Interactive Control Dock -->
+        <aside class="control-dock interactive-panel">
+          
+          <!-- Formations Selector -->
+          <div>
+            <div class="section-label">
+              <span>Formations</span>
+              <span class="hint">Keys 1 - 9</span>
+            </div>
+            <div class="formations-grid">
+              <button class="formation-pill" data-formation="sphere">
+                <span>Sphere</span>
+                <span class="key-hint">[1]</span>
+              </button>
+              <button class="formation-pill active" data-formation="galaxy">
+                <span>Galaxy</span>
+                <span class="key-hint">[2]</span>
+              </button>
+              <button class="formation-pill" data-formation="vortex">
+                <span>Vortex</span>
+                <span class="key-hint">[3]</span>
+              </button>
+              <button class="formation-pill" data-formation="torus">
+                <span>Torus</span>
+                <span class="key-hint">[4]</span>
+              </button>
+              <button class="formation-pill" data-formation="heart">
+                <span>Heart</span>
+                <span class="key-hint">[5]</span>
+              </button>
+              <button class="formation-pill" data-formation="dna">
+                <span>DNA</span>
+                <span class="key-hint">[6]</span>
+              </button>
+              <button class="formation-pill" data-formation="explosion">
+                <span>Explosion</span>
+                <span class="key-hint">[7]</span>
+              </button>
+              <button class="formation-pill" data-formation="nebula">
+                <span>Nebula</span>
+                <span class="key-hint">[8]</span>
+              </button>
+              <button class="formation-pill" data-formation="saturn">
+                <span>Saturn</span>
+                <span class="key-hint">[9]</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Color Themes -->
+          <div>
+            <div class="section-label">
+              <span>Color Palettes</span>
+            </div>
+            <div class="themes-grid">
+              <button class="theme-pill active" data-theme="nebula">Nebula</button>
+              <button class="theme-pill" data-theme="cyberpunk">Cyberpunk</button>
+              <button class="theme-pill" data-theme="electric">Electric</button>
+              <button class="theme-pill" data-theme="solar">Solar</button>
+              <button class="theme-pill" data-theme="emerald">Emerald</button>
+              <button class="theme-pill" data-theme="rainbow">Prismatic</button>
+            </div>
+          </div>
+
+          <!-- Simulation Tuning Sliders -->
+          <div class="sliders-group">
+            <div class="section-label">
+              <span>Dynamics & Physics</span>
+            </div>
+
+            <!-- Particle Count Slider -->
+            <div class="slider-item">
+              <div class="slider-header">
+                <span>Particle Density</span>
+                <span id="val-particle-count" class="val">20,000</span>
+              </div>
+              <input type="range" id="slider-particle-count" min="5000" max="45000" step="2500" value="20000" />
+            </div>
+
+            <!-- Particle Size Slider -->
+            <div class="slider-item">
+              <div class="slider-header">
+                <span>Particle Glow Size</span>
+                <span id="val-particle-size" class="val">0.85</span>
+              </div>
+              <input type="range" id="slider-particle-size" min="0.2" max="2.2" step="0.05" value="0.85" />
+            </div>
+
+            <!-- Gesture Sensitivity Slider -->
+            <div class="slider-item">
+              <div class="slider-header">
+                <span>Hand Sensitivity</span>
+                <span id="val-sensitivity" class="val">1.0x</span>
+              </div>
+              <input type="range" id="slider-sensitivity" min="0.4" max="2.5" step="0.1" value="1.0" />
+            </div>
+
+            <!-- Force Strength Slider -->
+            <div class="slider-item">
+              <div class="slider-header">
+                <span>Force Field Strength</span>
+                <span id="val-force-strength" class="val">1.0x</span>
+              </div>
+              <input type="range" id="slider-force-strength" min="0.2" max="3.0" step="0.1" value="1.0" />
+            </div>
+
+            <!-- Turbulence Slider -->
+            <div class="slider-item">
+              <div class="slider-header">
+                <span>Curl Turbulence</span>
+                <span id="val-turbulence" class="val">0.18</span>
+              </div>
+              <input type="range" id="slider-turbulence" min="0.0" max="0.6" step="0.02" value="0.18" />
+            </div>
+          </div>
+
+          <!-- Quick Action Buttons -->
+          <div>
+            <div class="section-label">
+              <span>Quick Actions</span>
+            </div>
+            <div class="actions-row">
+              <button id="btn-pause" class="btn-action">
+                <span class="icon">⏸</span> Pause
+              </button>
+              <button id="btn-reset" class="btn-action">
+                <span class="icon">🔄</span> Reset [R]
+              </button>
+              <button id="btn-audio" class="btn-action">
+                <span class="icon">🔊</span> Synth [M]
+              </button>
+              <button id="btn-screenshot" class="btn-action">
+                <span class="icon">📸</span> 4K Capture
+              </button>
+              <button id="btn-fullscreen" class="btn-action">
+                <span class="icon">⛶</span> Fullscreen
+              </button>
+              <button id="btn-help" class="btn-action">
+                <span class="icon">❓</span> Guide [?]
+              </button>
+            </div>
+          </div>
+
+        </aside>
+
+        <!-- Picture-In-Picture Webcam Window (Bottom Right) -->
+        <div id="webcam-pip" class="webcam-pip">
+          <div class="pip-header">
+            <span>AI Hand Vision</span>
+            <div class="pip-controls">
+              <button id="btn-flip-camera" class="pip-btn" title="Flip Mirroring">🪞</button>
+              <button id="btn-toggle-pip" class="pip-btn" title="Minimize / Expand">⤢</button>
+              <button id="btn-close-pip" class="pip-btn" title="Hide Preview">✕</button>
+            </div>
+          </div>
+          <div class="pip-body">
+            <video id="webcam-video" playsinline muted autoplay></video>
+            <canvas id="skeleton-canvas" width="220" height="130"></canvas>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Toast Alerts Container -->
+      <div id="toast-container"></div>
+
+      <!-- Help & Gesture Guide Modal Overlay -->
+      <div id="help-modal" class="modal-overlay">
+        <div class="modal-card">
+          <div class="modal-header">
+            <h2>✨ GestureFlow 3D Hand Gestures & Controls</h2>
+            <button id="btn-close-help" class="pip-btn" style="font-size: 18px;">✕</button>
+          </div>
+
+          <div class="guide-grid">
+            <div class="guide-item">
+              <div class="guide-icon">✋</div>
+              <div>
+                <div class="guide-title">OPEN PALM</div>
+                <div class="guide-desc">All fingers extended. Creates an outward spherical repulsion wave and moves the particle field center.</div>
+              </div>
+            </div>
+
+            <div class="guide-item">
+              <div class="guide-icon">✊</div>
+              <div>
+                <div class="guide-title">CLOSED FIST</div>
+                <div class="guide-desc">Fingers curled into a fist. Black hole gravitational compression with inward orbital spin.</div>
+              </div>
+            </div>
+
+            <div class="guide-item">
+              <div class="guide-icon">🤏</div>
+              <div>
+                <div class="guide-title">PINCH</div>
+                <div class="guide-desc">Bring thumb & index fingertips close. Concentrates particles into a gravitational singularity at the pinch point.</div>
+              </div>
+            </div>
+
+            <div class="guide-item">
+              <div class="guide-icon">👉</div>
+              <div>
+                <div class="guide-title">POINTING BEAM</div>
+                <div class="guide-desc">Extend index finger. Generates a directional particle stream and vortex trailing your fingertip.</div>
+              </div>
+            </div>
+
+            <div class="guide-item">
+              <div class="guide-icon">🙌</div>
+              <div>
+                <div class="guide-title">TWO HANDS</div>
+                <div class="guide-desc">Show both hands. Distance between hands dynamically scales the particle cloud and forms a connecting vortex tunnel.</div>
+              </div>
+            </div>
+
+            <div class="guide-item">
+              <div class="guide-icon">💨</div>
+              <div>
+                <div class="guide-title">FAST KINETIC SWIPE</div>
+                <div class="guide-desc">Rapid hand movement imparts momentum wind blasts and shockwave turbulence across the universe.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-label" style="margin-top: 16px;">Keyboard Shortcuts & Fallbacks</div>
+          <table class="shortcuts-table">
+            <tr>
+              <td><kbd>1</kbd> - <kbd>9</kbd></td>
+              <td>Morph between Sphere, Galaxy, Vortex, Torus, Heart, DNA, Explosion, Nebula, Saturn</td>
+            </tr>
+            <tr>
+              <td><kbd>Space</kbd></td>
+              <td>Pause / Resume physics simulation</td>
+            </tr>
+            <tr>
+              <td><kbd>R</kbd></td>
+              <td>Reset particle field with outward dispersion blast</td>
+            </tr>
+            <tr>
+              <td><kbd>M</kbd></td>
+              <td>Toggle reactive ambient audio synthesizer</td>
+            </tr>
+            <tr>
+              <td><kbd>S</kbd></td>
+              <td>Export high-resolution 4K PNG screenshot</td>
+            </tr>
+            <tr>
+              <td><kbd>H</kbd></td>
+              <td>Toggle HUD visibility for clean screenshot mode</td>
+            </tr>
+            <tr>
+              <td><kbd>F</kbd></td>
+              <td>Toggle Fullscreen mode</td>
+            </tr>
+            <tr>
+              <td><kbd>Mouse Left Drag</kbd></td>
+              <td>Fallback Pinch / Attractor singularity</td>
+            </tr>
+            <tr>
+              <td><kbd>Mouse Right Drag</kbd></td>
+              <td>Fallback Repulsion blast field</td>
+            </tr>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Application Script Entrypoint -->
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
