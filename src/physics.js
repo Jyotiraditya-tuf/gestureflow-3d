@@ -204,16 +204,19 @@ export class PhysicsEngine {
 
             if (pDistSq < pinchRadiusSq && pDistSq > 0.001) {
               const pDist = Math.sqrt(pDistSq);
-              const singularityStrength = Math.pow(1.0 - pDist / pinchRadius, 1.5) * (4.5 * pinchTightness * forceMult);
+              const pStrength = (handData && handData.pinchStrength !== undefined) ? handData.pinchStrength : pinchTightness;
+              const singularityStrength = Math.pow(1.0 - pDist / pinchRadius, 1.6) * (5.6 * (0.25 + 0.75 * pStrength) * forceMult);
               const invDist = 1.0 / pDist;
 
+              // Inward radial gravity pull to pinch singularity
               fx -= pDx * invDist * singularityStrength;
               fy -= pDy * invDist * singularityStrength;
               fz -= pDz * invDist * singularityStrength;
 
-              // Orbital spin around pinch axis
-              fx += -pDz * invDist * (1.2 * pinchTightness);
-              fz += pDx * invDist * (1.2 * pinchTightness);
+              // Accretion disk orbital vortex around pinch axis
+              const swirlSpeed = (1.8 * (0.3 + 0.7 * pStrength)) * forceMult;
+              fx += -pDz * invDist * swirlSpeed;
+              fz += pDx * invDist * swirlSpeed;
             }
             break;
           }

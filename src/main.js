@@ -11,6 +11,7 @@ import { GestureController } from './gestureController.js';
 import { HandTrackingManager } from './handTracking.js';
 import { UIManager } from './ui.js';
 import { AmbientSynthesizer } from './audio.js';
+import { FORMATIONS, FORMATION_ORDER } from './formations.js';
 
 class App {
   constructor() {
@@ -254,14 +255,43 @@ class App {
 
     this.ui.updateGestureDisplay(this.currentGestureState);
 
-    // Hand tilt driving scene camera rotation
+    // 1. Handle Swipe Event for Formation Switching
+    if (this.currentHandData && this.currentHandData.swipeEvent) {
+      const { direction } = this.currentHandData.swipeEvent;
+      const currIdx = FORMATION_ORDER.indexOf(this.particles.currentFormationId);
+      const totalFormations = FORMATION_ORDER.length;
+      
+      let nextIdx;
+      if (direction === 'right') {
+        nextIdx = (currIdx + 1) % totalFormations;
+      } else {
+        nextIdx = (currIdx - 1 + totalFormations) % totalFormations;
+      }
+
+      const nextFormationId = FORMATION_ORDER[nextIdx];
+      this.particles.setFormation(nextFormationId);
+      this.ui.setActiveFormationPill(nextFormationId);
+
+      const formName = FORMATIONS[nextFormationId]?.name || nextFormationId;
+      const arrow = direction === 'right' ? '➔' : '⬅';
+      this.ui.showToast(`💨 Swipe ${direction.toUpperCase()} ${arrow} Formation: ${formName}`);
+    }
+
+    // 2. Handle Two-Hand Interactive Universe Twist Rotation
+    if (this.currentHandData && this.currentHandData.hasTwoHands) {
+      if (this.currentHandData.twoHandAngleDelta !== 0 && this.particles && this.particles.points) {
+        this.particles.points.rotation.z += this.currentHandData.twoHandAngleDelta * 0.75;
+      }
+    }
+
+    // 3. Hand tilt driving scene camera rotation (Single Hand mode)
     if (this.currentHandData && this.currentHandData.hasHand && !this.currentHandData.hasTwoHands) {
       const palm = this.currentHandData.normalizedPalm;
       if (palm) {
         this.targetCameraRotY = (palm.x - 0.5) * -0.7;
         this.targetCameraRotX = (palm.y - 0.5) * 0.5;
       }
-    } else {
+    } else if (!this.currentHandData || !this.currentHandData.hasHand) {
       this.targetCameraRotX = 0;
       this.targetCameraRotY = 0;
     }

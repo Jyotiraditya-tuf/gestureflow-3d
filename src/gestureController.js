@@ -1,7 +1,8 @@
 /**
- * GestureFlow 3D - Optimized Gesture Recognition & Classification
- * Efficient 3D hand landmark analysis with squared-distance metrics,
- * temporal hysteresis, and zero allocation during evaluation.
+ * GestureFlow 3D - Advanced Gesture Recognition & State Controller
+ * High-performance 3D hand landmark analysis with centralized configuration,
+ * horizontal swipe formation switching, two-hand angular orientation,
+ * continuous pinch gravity strength, and temporal hysteresis.
  */
 
 export const HAND_LANDMARKS = {
@@ -28,10 +29,25 @@ export const HAND_LANDMARKS = {
   PINKY_TIP: 20
 };
 
+/**
+ * Centralized Gesture & Interaction Thresholds Configuration
+ */
+export const GESTURE_CONFIG = {
+  SWIPE_VELOCITY_THRESHOLD: 32.0,      // World units/sec for horizontal swipe
+  SWIPE_COOLDOWN: 650,                 // Cooldown in ms between swipe triggers
+  PINCH_MIN_DISTANCE: 0.025,           // Distance for 100% pinch strength
+  PINCH_MAX_DISTANCE: 0.082,           // Distance for 0% pinch strength
+  GESTURE_STABILITY_FRAMES: 3,         // Hysteresis frame window for smooth transitions
+  ROTATION_SENSITIVITY: 1.4,           // Two-hand angular rotation multiplier
+  GRAVITY_STRENGTH: 4.8                // Base gravity multiplier
+};
+
 export class GestureController {
   constructor() {
     this.prevLandmarks = null;
     this.prevTimestamp = 0;
+    
+    // Smoothed spatial coordinates
     this.smoothedVelocity = { x: 0, y: 0, z: 0 };
     this.smoothedPalm = { x: 0, y: 0, z: 0 };
     this.smoothedPinch = { x: 0, y: 0, z: 0 };
@@ -39,14 +55,23 @@ export class GestureController {
     this.smoothedHand1 = { x: 0, y: 0, z: 0 };
     this.smoothedHand2 = { x: 0, y: 0, z: 0 };
     
-    // Temporal gesture confidence accumulator
+    // Temporal gesture confidence accumulator & hysteresis
     this.currentGesture = 'NO HAND DETECTED';
     this.gestureConfidence = 0;
     this.gestureCandidate = 'NO HAND DETECTED';
     this.candidateFrames = 0;
-    this.requiredHoldFrames = 3;
+    this.requiredHoldFrames = GESTURE_CONFIG.GESTURE_STABILITY_FRAMES;
 
     this.velocityMagnitude = 0;
+
+    // Swipe gesture debouncing & event state
+    this.lastSwipeTime = 0;
+    this.pendingSwipeEvent = null;
+
+    // Two-hand angular rotation state
+    this.prevTwoHandAngle = null;
+    this.currentTwoHandAngle = 0;
+    this.twoHandAngleDelta = 0;
 
     this.gestureMeta = {
       'OPEN PALM': {
@@ -62,7 +87,7 @@ export class GestureController {
       'PINCH': {
         icon: '🤏',
         title: 'Pinch Singularity',
-        description: 'High-density gravitational attraction at pinch point'
+        description: 'Localized gravitational well scaling with pinch tightness'
       },
       'POINT': {
         icon: '👉',
@@ -72,12 +97,12 @@ export class GestureController {
       'TWO HANDS': {
         icon: '🙌',
         title: 'Two Hands Interplay',
-        description: 'Dual-hand particle scaling and connective helical tunnel'
+        description: 'Dual-hand scaling & interactive universe twist rotation'
       },
       'FAST SWIPE': {
         icon: '💨',
         title: 'Kinetic Swipe',
-        description: 'Directional shockwave turbulence from rapid hand velocity'
+        description: 'Horizontal wave switches 3D particle formations'
       },
       'NO HAND DETECTED': {
         icon: '✨',
@@ -120,7 +145,7 @@ export class GestureController {
     const L = HAND_LANDMARKS;
     const wrist = landmarks[L.WRIST];
 
-    // Using squared distances: tipDistSq > pipDistSq * 1.32 (1.15^2 ~ 1.32)
+    // Using squared distances: tipDistSq > pipDistSq * 1.32
     const indexExtended = this.dist3DSq(landmarks[L.INDEX_TIP], wrist) > this.dist3DSq(landmarks[L.INDEX_PIP], wrist) * 1.32;
     const middleExtended = this.dist3DSq(landmarks[L.MIDDLE_TIP], wrist) > this.dist3DSq(landmarks[L.MIDDLE_PIP], wrist) * 1.32;
     const ringExtended = this.dist3DSq(landmarks[L.RING_TIP], wrist) > this.dist3DSq(landmarks[L.RING_PIP], wrist) * 1.32;
@@ -135,6 +160,10 @@ export class GestureController {
 
     const extCount = (thumbExtended ? 1 : 0) + (indexExtended ? 1 : 0) + (middleExtended ? 1 : 0) + (ringExtended ? 1 : 0) + (pinkyExtended ? 1 : 0);
 
+    // Calculate continuous pinch strength (0.0 = open, 1.0 = tightly pinched)
+    const { PINCH_MIN_DISTANCE, PINCH_MAX_DISTANCE } = GESTURE_CONFIG;
+    const pinchStrength = Math.max(0, Math.min(1, (PINCH_MAX_DISTANCE - pinchDist) / (PINCH_MAX_DISTANCE - PINCH_MIN_DISTANCE)));
+
     return {
       thumb: thumbExtended,
       index: indexExtended,
@@ -142,6 +171,7 @@ export class GestureController {
       ring: ringExtended,
       pinky: pinkyExtended,
       pinchDistance: pinchDist,
+      pinchStrength: pinchStrength,
       extendedCount: extCount
     };
   }
@@ -153,11 +183,16 @@ export class GestureController {
     const multiHandLandmarks = results && results.multiHandLandmarks;
     const handCount = multiHandLandmarks ? multiHandLandmarks.length : 0;
 
+    // Reset transient swipe event for this frame
+    let swipeEvent = null;
+
     if (handCount === 0) {
       this.smoothedVelocity.x = 0;
       this.smoothedVelocity.y = 0;
       this.smoothedVelocity.z = 0;
       this.velocityMagnitude = 0;
+      this.prevTwoHandAngle = null;
+      this.twoHandAngleDelta = 0;
       this.updateSmoothedGesture('NO HAND DETECTED', 1.0);
       return {
         hasHand: false,
@@ -186,6 +221,21 @@ export class GestureController {
 
       const normDist = Math.sqrt(this.dist3DSq(palm1, palm2));
 
+      // Calculate angle between both hands in XY screen space
+      const currentAngle = Math.atan2(this.smoothedHand2.y - this.smoothedHand1.y, this.smoothedHand2.x - this.smoothedHand1.x);
+      this.currentTwoHandAngle = currentAngle;
+
+      if (this.prevTwoHandAngle !== null) {
+        let diff = currentAngle - this.prevTwoHandAngle;
+        // Unwrap angular discontinuity
+        if (diff > Math.PI) diff -= Math.PI * 2;
+        if (diff < -Math.PI) diff += Math.PI * 2;
+        this.twoHandAngleDelta = diff * GESTURE_CONFIG.ROTATION_SENSITIVITY;
+      } else {
+        this.twoHandAngleDelta = 0;
+      }
+      this.prevTwoHandAngle = currentAngle;
+
       this.updateSmoothedGesture('TWO HANDS', 0.95);
 
       return {
@@ -195,19 +245,29 @@ export class GestureController {
         handData: {
           hasHand: true,
           hasTwoHands: true,
+          handCount: 2,
           hand1World: this.smoothedHand1,
           hand2World: this.smoothedHand2,
           twoHandsDistance: normDist,
+          twoHandAngle: this.currentTwoHandAngle,
+          twoHandAngleDelta: this.twoHandAngleDelta,
           worldPosition: {
             x: (this.smoothedHand1.x + this.smoothedHand2.x) * 0.5,
             y: (this.smoothedHand1.y + this.smoothedHand2.y) * 0.5,
             z: (this.smoothedHand1.z + this.smoothedHand2.z) * 0.5
           },
           velocity: { x: 0, y: 0, z: 0 },
-          pinchDistance: 1.0
+          speed: 0,
+          pinchDistance: 1.0,
+          pinchStrength: 0.0,
+          swipeEvent: null
         }
       };
     }
+
+    // Reset two hand tracking state when 1 hand
+    this.prevTwoHandAngle = null;
+    this.twoHandAngleDelta = 0;
 
     // 2. Single Hand Tracking
     const landmarks = multiHandLandmarks[0];
@@ -222,7 +282,7 @@ export class GestureController {
       const rawVy = (wPalm.y - prevWPalm.y) / dt;
       const rawVz = (wPalm.z - prevWPalm.z) / dt;
 
-      const vAlpha = 0.4;
+      const vAlpha = 0.42;
       this.smoothedVelocity.x += (rawVx - this.smoothedVelocity.x) * vAlpha;
       this.smoothedVelocity.y += (rawVy - this.smoothedVelocity.y) * vAlpha;
       this.smoothedVelocity.z += (rawVz - this.smoothedVelocity.z) * vAlpha;
@@ -232,6 +292,24 @@ export class GestureController {
         this.smoothedVelocity.y * this.smoothedVelocity.y +
         this.smoothedVelocity.z * this.smoothedVelocity.z
       );
+
+      // --- ADVANCED HORIZONTAL SWIPE DETECTION ---
+      const absVx = Math.abs(this.smoothedVelocity.x);
+      const absVy = Math.abs(this.smoothedVelocity.y);
+      const isSwipeSpeed = absVx > GESTURE_CONFIG.SWIPE_VELOCITY_THRESHOLD;
+      const isHorizontalDominant = absVx > absVy * 1.25;
+      const isCooldownElapsed = (timestamp - this.lastSwipeTime) > GESTURE_CONFIG.SWIPE_COOLDOWN;
+
+      if (isSwipeSpeed && isHorizontalDominant && isCooldownElapsed) {
+        const direction = this.smoothedVelocity.x > 0 ? 'right' : 'left';
+        swipeEvent = {
+          direction,
+          velocity: this.smoothedVelocity.x,
+          speed: this.velocityMagnitude,
+          timestamp
+        };
+        this.lastSwipeTime = timestamp;
+      }
     }
     this.prevLandmarks = landmarks;
 
@@ -259,16 +337,16 @@ export class GestureController {
     let detectedGesture = 'OPEN PALM';
     let rawConfidence = 0.8;
 
-    if (this.velocityMagnitude > 45.0) {
+    if (this.velocityMagnitude > 40.0) {
       detectedGesture = 'FAST SWIPE';
-      rawConfidence = Math.min(1.0, this.velocityMagnitude / 70.0);
-    } else if (fingers.pinchDistance < 0.075) {
+      rawConfidence = Math.min(1.0, this.velocityMagnitude / 65.0);
+    } else if (fingers.pinchStrength > 0.05 || fingers.pinchDistance < GESTURE_CONFIG.PINCH_MAX_DISTANCE) {
       detectedGesture = 'PINCH';
-      rawConfidence = Math.min(1.0, 1.0 - (fingers.pinchDistance / 0.075));
+      rawConfidence = Math.max(0.7, fingers.pinchStrength);
     } else if (fingers.index && !fingers.middle && !fingers.ring && !fingers.pinky) {
       detectedGesture = 'POINT';
       rawConfidence = 0.9;
-    } else if (fingers.extendedCount <= 1 && fingers.pinchDistance > 0.08) {
+    } else if (fingers.extendedCount <= 1 && fingers.pinchDistance > GESTURE_CONFIG.PINCH_MAX_DISTANCE) {
       detectedGesture = 'FIST';
       rawConfidence = 0.92;
     } else if (fingers.extendedCount >= 4) {
@@ -276,7 +354,7 @@ export class GestureController {
       rawConfidence = 0.95;
     } else {
       detectedGesture = 'OPEN PALM';
-      rawConfidence = 0.6;
+      rawConfidence = 0.65;
     }
 
     this.updateSmoothedGesture(detectedGesture, rawConfidence);
@@ -293,14 +371,20 @@ export class GestureController {
       handData: {
         hasHand: true,
         hasTwoHands: false,
+        handCount: 1,
         worldPosition: this.smoothedPalm,
         indexTipWorld: this.smoothedIndexTip,
         pinchWorld: this.smoothedPinch,
         pinchDistance: fingers.pinchDistance,
+        pinchStrength: fingers.pinchStrength,
         velocity: this.smoothedVelocity,
         speed: this.velocityMagnitude,
         tilt: { x: tiltX, y: tiltY },
-        normalizedPalm: palm
+        normalizedPalm: palm,
+        swipeEvent: swipeEvent,
+        twoHandsDistance: 1.0,
+        twoHandAngle: 0,
+        twoHandAngleDelta: 0
       }
     };
   }
@@ -329,3 +413,4 @@ export class GestureController {
     };
   }
 }
+

@@ -470,3 +470,16 @@ export const FORMATIONS = {
   nebula: { name: 'Nebula', fn: createNebulaFormation, id: 'nebula', key: '8' },
   saturn: { name: 'Saturn', fn: createSaturnFormation, id: 'saturn', key: '9' }
 };
+
+export const FORMATION_ORDER = [
+  'sphere',
+  'galaxy',
+  'vortex',
+  'torus',
+  'heart',
+  'dna',
+  'explosion',
+  'nebula',
+  'saturn'
+];
+
