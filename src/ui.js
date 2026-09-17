@@ -45,6 +45,7 @@ export class UIManager {
       cameraBadge: document.getElementById('camera-status-badge'),
       cameraStatusText: document.getElementById('camera-status-text'),
       fpsCounter: document.getElementById('fps-counter'),
+      visionFpsCounter: document.getElementById('vision-fps-counter'),
       particleCountBadge: document.getElementById('particle-count-badge'),
 
       // Gesture Card
@@ -392,18 +393,24 @@ export class UIManager {
     }
   }
 
-  updateStats(fps, particleCount) {
-    const fpsStr = `${Math.round(fps)} FPS`;
+  updateStats(renderFps, visionFps, particleCount) {
+    const fpsStr = `${Math.round(renderFps)} FPS`;
     if (this.dom.fpsCounter && this.domCache.fps !== fpsStr) {
       this.domCache.fps = fpsStr;
       this.dom.fpsCounter.textContent = fpsStr;
-      if (fps < 30) {
+      if (renderFps < 30) {
         this.dom.fpsCounter.style.color = '#ef4444';
-      } else if (fps < 50) {
+      } else if (renderFps < 50) {
         this.dom.fpsCounter.style.color = '#f59e0b';
       } else {
         this.dom.fpsCounter.style.color = '#10b981';
       }
+    }
+
+    const vFpsStr = `${Math.round(visionFps || 24)} FPS Vision`;
+    if (this.dom.visionFpsCounter && this.domCache.visionFps !== vFpsStr) {
+      this.domCache.visionFps = vFpsStr;
+      this.dom.visionFpsCounter.textContent = vFpsStr;
     }
 
     const pStr = `${particleCount.toLocaleString()} particles`;
@@ -416,10 +423,14 @@ export class UIManager {
   updatePerfHUD(metrics) {
     if (!this.showPerfHUD || !this.dom.perfContent) return;
 
-    const { frameTime, physicsTime, visionTime, renderTime, fps, particles } = metrics;
-    const text = `FPS: ${Math.round(fps)} | Frame: ${frameTime.toFixed(1)}ms
-Physics: ${physicsTime.toFixed(1)}ms | Vision: ${visionTime.toFixed(1)}ms | Render: ${renderTime.toFixed(1)}ms
-Particles: ${particles.toLocaleString()}`;
+    const { frameTime, physicsTime, visionTime, renderTime, fps, visionFps, particles, resolution, quality } = metrics;
+    const text = `⚡ TELEMETRY & ADAPTIVE SCALING
+• Render Frame:    ${Math.round(fps)} FPS (${frameTime.toFixed(1)}ms)
+• Vision AI Model: ${Math.round(visionFps || 24)} FPS (${visionTime.toFixed(1)}ms)
+• Physics Step:    ${physicsTime.toFixed(1)}ms
+• WebGL Draw:      ${renderTime.toFixed(1)}ms
+• Particle Count:  ${particles.toLocaleString()}
+• Resolution DPI:  ${resolution || '1.50x'} [${quality || 'AUTO'}]`;
 
     if (this.domCache.perfStats !== text) {
       this.domCache.perfStats = text;

@@ -29,15 +29,19 @@ class App {
     // Quality Mode: 'auto' | 'high' | 'medium' | 'low'
     this.qualityMode = 'auto';
     this.autoTuneCooldown = 0;
+    this.currentPixelRatio = Math.min(window.devicePixelRatio, 1.5);
 
     // Performance Instrumentation
     this.perfMetrics = {
       fps: 60,
+      visionFps: 24,
       frameTime: 16.6,
       physicsTime: 2.0,
       visionTime: 0,
       renderTime: 3.0,
-      particles: 20000
+      particles: 20000,
+      resolution: `${this.currentPixelRatio.toFixed(2)}x`,
+      quality: 'AUTO'
     };
 
     // Three.js Core
@@ -221,23 +225,24 @@ class App {
     switch (preset) {
       case 'high':
         count = 30000;
-        pixelRatio = 1.5;
+        pixelRatio = Math.min(window.devicePixelRatio, 1.5);
         break;
       case 'medium':
         count = 18000;
-        pixelRatio = 1.5;
+        pixelRatio = Math.min(window.devicePixelRatio, 1.25);
         break;
       case 'low':
         count = 8000;
-        pixelRatio = 1.25;
+        pixelRatio = 1.0;
         break;
       case 'auto':
         count = 20000;
-        pixelRatio = 1.5;
+        pixelRatio = Math.min(window.devicePixelRatio, 1.5);
         break;
     }
 
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatio));
+    this.currentPixelRatio = pixelRatio;
+    this.renderer.setPixelRatio(this.currentPixelRatio);
     this.particles.setParticleCount(count);
 
     if (this.ui.dom.sliderParticleCount) {
@@ -358,14 +363,36 @@ class App {
         this.fpsMovingAverage = this.fpsMovingAverage * 0.7 + this.fps * 0.3;
         this.frameCount = 0;
         this.lastFpsUpdate = currentTime;
-        this.ui.updateStats(this.fpsMovingAverage, this.particles.count);
+
+        const visionFps = this.handTracker ? this.handTracker.visionFps : 24;
+        this.ui.updateStats(this.fpsMovingAverage, visionFps, this.particles.count);
 
         // Adaptive performance controller in 'auto' mode
         if (this.qualityMode === 'auto') {
           this.autoTuneCooldown++;
-          if (this.autoTuneCooldown >= 6) { // check every 1.5 seconds
-            if (this.fpsMovingAverage < 45 && this.particles.count > 10000) {
-              const newCount = Math.max(8000, Math.floor(this.particles.count * 0.8));
+          if (this.autoTuneCooldown >= 5) { // Evaluate every ~1.25 seconds
+            const maxDpiRatio = Math.min(window.devicePixelRatio, 1.5);
+
+            if (this.fpsMovingAverage < 38) {
+              // Severe lag: aggressive particle reduction and lower rendering resolution
+              const newCount = Math.max(5000, Math.floor(this.particles.count * 0.75));
+              this.particles.setParticleCount(newCount);
+              if (this.currentPixelRatio > 1.0) {
+                this.currentPixelRatio = 1.0;
+                this.renderer.setPixelRatio(this.currentPixelRatio);
+              } else if (this.currentPixelRatio > 0.85) {
+                this.currentPixelRatio = 0.85;
+                this.renderer.setPixelRatio(this.currentPixelRatio);
+              }
+              if (this.ui.dom.sliderParticleCount) {
+                this.ui.dom.sliderParticleCount.value = newCount;
+                if (this.ui.dom.valParticleCount) {
+                  this.ui.dom.valParticleCount.textContent = newCount.toLocaleString();
+                }
+              }
+            } else if (this.fpsMovingAverage < 48 && this.particles.count > 8000) {
+              // Moderate lag: gentle particle reduction
+              const newCount = Math.max(7500, Math.floor(this.particles.count * 0.88));
               this.particles.setParticleCount(newCount);
               if (this.ui.dom.sliderParticleCount) {
                 this.ui.dom.sliderParticleCount.value = newCount;
@@ -373,13 +400,19 @@ class App {
                   this.ui.dom.valParticleCount.textContent = newCount.toLocaleString();
                 }
               }
-            } else if (this.fpsMovingAverage >= 58 && this.particles.count < 24000) {
-              const newCount = Math.min(24000, this.particles.count + 2000);
-              this.particles.setParticleCount(newCount);
-              if (this.ui.dom.sliderParticleCount) {
-                this.ui.dom.sliderParticleCount.value = newCount;
-                if (this.ui.dom.valParticleCount) {
-                  this.ui.dom.valParticleCount.textContent = newCount.toLocaleString();
+            } else if (this.fpsMovingAverage >= 58) {
+              // Stable 60 FPS: restore resolution first, then gently scale up particle density
+              if (this.currentPixelRatio < maxDpiRatio) {
+                this.currentPixelRatio = Math.min(maxDpiRatio, this.currentPixelRatio + 0.25);
+                this.renderer.setPixelRatio(this.currentPixelRatio);
+              } else if (this.particles.count < 26000) {
+                const newCount = Math.min(26000, this.particles.count + 1500);
+                this.particles.setParticleCount(newCount);
+                if (this.ui.dom.sliderParticleCount) {
+                  this.ui.dom.sliderParticleCount.value = newCount;
+                  if (this.ui.dom.valParticleCount) {
+                    this.ui.dom.valParticleCount.textContent = newCount.toLocaleString();
+                  }
                 }
               }
             }
@@ -432,11 +465,14 @@ class App {
       // 6. Update Performance Telemetry HUD if active
       if (this.ui.showPerfHUD) {
         this.perfMetrics.fps = this.fpsMovingAverage;
+        this.perfMetrics.visionFps = this.handTracker ? this.handTracker.visionFps : 24;
         this.perfMetrics.frameTime = totalFrameDuration;
         this.perfMetrics.physicsTime = physicsDuration;
-        this.perfMetrics.visionTime = this.handTracker.inferenceDuration;
+        this.perfMetrics.visionTime = this.handTracker ? this.handTracker.inferenceDuration : 0;
         this.perfMetrics.renderTime = renderDuration;
         this.perfMetrics.particles = this.particles.count;
+        this.perfMetrics.resolution = `${this.currentPixelRatio.toFixed(2)}x DPI`;
+        this.perfMetrics.quality = this.qualityMode.toUpperCase();
         this.ui.updatePerfHUD(this.perfMetrics);
       }
     };

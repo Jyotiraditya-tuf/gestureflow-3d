@@ -46,6 +46,9 @@ export class HandTrackingManager {
     this.lastInferenceTime = 0;
     this.isInferencing = false;
     this.inferenceDuration = 0; // ms per inference for performance stats
+    this.visionFps = 24;
+    this.visionInferenceCount = 0;
+    this.lastVisionFpsUpdate = performance.now();
 
     // Cached results for continuous 60 FPS consumer loop
     this.lastResults = null;
@@ -233,6 +236,16 @@ export class HandTrackingManager {
    */
   handleResults(results) {
     this.lastResults = results;
+
+    // Measure live vision AI frame rate
+    this.visionInferenceCount++;
+    const now = performance.now();
+    const elapsed = now - this.lastVisionFpsUpdate;
+    if (elapsed >= 400) {
+      this.visionFps = (this.visionInferenceCount * 1000) / elapsed;
+      this.visionInferenceCount = 0;
+      this.lastVisionFpsUpdate = now;
+    }
 
     // Render skeleton overlay on PIP canvas only when preview is visible
     if (this.ctx && this.showPreview) {
