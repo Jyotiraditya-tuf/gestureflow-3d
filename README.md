@@ -125,30 +125,6 @@
 
 ---
 
-## 📁 Project Structure
-
-```
-gestureflow-3d/
-├── index.html                 # Main application HTML & layout
-├── package.json               # Dependencies & scripts
-├── vite.config.js             # Vite configuration
-├── README.md                  # Comprehensive project documentation
-├── public/
-│   └── favicon.svg            # Cyberpunk particle SVG icon
-└── src/
-    ├── main.js                # App coordinator, render loop, resize & lifecycle
-    ├── particles.js           # ParticleSystem class (BufferGeometry, color themes, morphing)
-    ├── formations.js          # Parametric 3D shapes (Sphere, Galaxy, Vortex, Torus, Heart, DNA, etc.)
-    ├── physics.js             # Physics engine (Velocity, damping, 3D curl noise, force fields)
-    ├── handTracking.js        # MediaPipe Hands manager, video feed, skeleton canvas overlay
-    ├── gestureController.js   # Gesture classifier with temporal smoothing & kinematics
-    ├── ui.js                  # Glassmorphism HUD manager, sliders, badges & notifications
-    ├── audio.js               # Reactive ambient Web Audio synthesizer
-    └── styles.css             # Futuristic dark mode styling & glassmorphism
-```
-
----
-
 ## 📦 Installation & Local Setup
 
 ### Prerequisites
